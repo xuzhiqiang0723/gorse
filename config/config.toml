@@ -55,13 +55,13 @@ n_jobs = 1
 meta_timeout = "10s"
 
 # Username for the master node dashboard.
-dashboard_user_name = ""
+dashboard_user_name = "xzq"
 
 # Password for the master node dashboard.
-dashboard_password = ""
+dashboard_password = "xzq123456"
 
 # Secret key for admin APIs (SSL required).
-admin_api_key = ""
+admin_api_key = "xzq123456"
 
 [server]
 
@@ -69,7 +69,7 @@ admin_api_key = ""
 default_n = 10
 
 # Secret key for RESTful APIs (SSL required).
-api_key = ""
+api_key = "xzq123456"
 
 # Clock error in the cluster. The default value is 5s.
 clock_error = "5s"
