@@ -16,11 +16,10 @@ package data
 
 import (
 	"context"
-	"testing"
-	"time"
-
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
+	"testing"
+	"time"
 )
 
 func TestNoDatabase(t *testing.T) {
