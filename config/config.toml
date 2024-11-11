@@ -7,7 +7,10 @@
 #   postgresql://bob:secret@1.2.3.4:5432/mydb?sslmode=verify-full
 #   mongodb://[username:password@]host1[:port1][,...hostN[:portN]][/[defaultauthdb][?options]]
 #   mongodb+srv://[username:password@]host1[:port1][,...hostN[:portN]][/[defaultauthdb][?options]]
-cache_store = "redis://localhost:6379/0"
+#cache_store = "redis://localhost:6379/0"
+
+cache_store = "postgres://gorse:gorse_pass@localhost:5432/gorse?sslmode=disable"
+#cache_store = "redis://gorse:gorse_pass@localhost:6379/0"
 
 # The database for persist data, support MySQL, Postgres, ClickHouse and MongoDB:
 #   mysql://[username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
@@ -52,10 +55,10 @@ http_cors_domains = []
 http_cors_methods = []
 
 # Number of working jobs in the master node. The default value is 1.
-n_jobs = 1
+n_jobs = 4
 
 # Meta information timeout. The default value is 10s.
-meta_timeout = "10s"
+meta_timeout = "20s"
 
 # Username for the master node dashboard.
 dashboard_user_name = "xzq"
@@ -124,7 +127,7 @@ popular_window = "720h"
 #   auto: If a user have labels, neighbors are found by number of common labels.
 #         If this user have no labels, neighbors are found by number of common liked items.
 # The default value is "auto".
-neighbor_type = "similar"
+neighbor_type = "related"
 
 # Enable approximate user neighbor searching using vector index. The default value is true.
 enable_index = true
@@ -133,6 +136,7 @@ enable_index = true
 index_recall = 0.8
 
 # Maximal number of fit epochs for approximate user neighbor searching vector index. The default value is 3.
+# 最大拟合周期数，用于近似用户邻居搜索向量索引。默认值为3。
 index_fit_epoch = 3
 
 [recommend.item_neighbors]
@@ -143,7 +147,7 @@ index_fit_epoch = 3
 #   auto: If a item have labels, neighbors are found by number of common labels.
 #         If this item have no labels, neighbors are found by number of common users.
 # The default value is "auto".
-neighbor_type = "similar"
+neighbor_type = "auto"
 
 # Enable approximate item neighbor searching using vector index. The default value is true.
 enable_index = true
@@ -178,7 +182,7 @@ model_search_epoch = 100
 model_search_trials = 10
 
 # Enable searching models of different sizes, which consume more memory. The default value is false.
-enable_model_size_search = false
+enable_model_size_search = true
 
 [recommend.replacement]
 
@@ -197,7 +201,7 @@ read_replacement_decay = 0.6
 check_recommend_period = "1m"
 
 # The time period to refresh recommendation for inactive users. The default values is 120h.
-refresh_recommend_period = "24h"
+refresh_recommend_period = "12h"
 
 # Enable latest recommendation during offline recommendation. The default value is false.
 enable_latest_recommend = true

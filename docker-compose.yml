@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - 6379:6379
+#    volumes:
+#      - redis_data:/data  # 持久化数据
 
   mysql:
     image: mysql/mysql-server
@@ -19,27 +21,27 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
 
-  # postgres:
-  #   image: postgres:10.0
-  #   ports:
-  #     - 5432:5432
-  #   environment:
-  #     POSTGRES_DB: gorse
-  #     POSTGRES_USER: gorse
-  #     POSTGRES_PASSWORD: gorse_pass
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
+  postgres:
+    image: postgres:10.0
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_DB: gorse
+      POSTGRES_USER: gorse
+      POSTGRES_PASSWORD: gorse_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
-  # mongo:
-  #   image: mongo:4.0
-  #   ports:
-  #     - 27017:27017
-  #   environment:
-  #     MONGO_INITDB_DATABASE: gorse
-  #     MONGO_INITDB_ROOT_USERNAME: root
-  #     MONGO_INITDB_ROOT_PASSWORD: password
-  #   volumes:
-  #     - mongo_data:/data/db
+#  mongo:
+#    image: mongo:4.0
+#    ports:
+#      - 27017:27017
+#    environment:
+#       MONGO_INITDB_DATABASE: gorse
+#       MONGO_INITDB_ROOT_USERNAME: root
+#       MONGO_INITDB_ROOT_PASSWORD: password
+#    volumes:
+#      - mongo_data:/data/db
 
   # clickhouse:
   #   image: clickhouse/clickhouse-server:22
@@ -111,12 +113,25 @@ services:
       # - mongo
       # - clickhouse
 
+  jaeger:
+    image: jaegertracing/all-in-one
+    ports:
+      - "5775:5775"    # UDP for client-side sampling
+      - "6831:6831"    # UDP for receiving traces
+      - "6832:6832"    # UDP for receiving traces
+      - "5778:5778"    # HTTP for sampling strategy
+      - "16686:16686"  # UI
+      - "14250:14250"  # gRPC
+      - "14268:14268"  # HTTP for receiving traces
+    environment:
+      COLLECTOR_ZIPKIN_HTTP_PORT: 9411
+
 volumes:
   worker_data:
   server_data:
   master_data:
   gorse_log:
   mysql_data:
-  # postgres_data:
-  # mongo_data:
+  postgres_data:
+  #  mongo_data:
   # clickhouse_data:

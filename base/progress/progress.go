@@ -66,6 +66,7 @@ func (t *Tracer) List() []Progress {
 		progress = append(progress, span.Progress())
 		return true
 	})
+	println(progress)
 	// sort by start time
 	sort.Slice(progress, func(i, j int) bool {
 		return progress[i].StartTime.Before(progress[j].StartTime)
