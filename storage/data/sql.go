@@ -73,6 +73,9 @@ type SQLUser struct {
 	Labels    string `gorm:"column:labels"`
 	Subscribe string `gorm:"column:subscribe"`
 	Comment   string `gorm:"column:comment"`
+	Age       int    `gorm:"column:age"`
+	Address   string `gorm:"column:address"`
+	Gender    string `gorm:"column:gender"`
 }
 
 func NewSQLUser(user User) (sqlUser SQLUser) {
@@ -83,6 +86,9 @@ func NewSQLUser(user User) (sqlUser SQLUser) {
 	buf, _ = jsonutil.Marshal(user.Subscribe)
 	sqlUser.Subscribe = string(buf)
 	sqlUser.Comment = user.Comment
+	sqlUser.Age = user.Age
+	sqlUser.Address = user.Address
+	sqlUser.Gender = user.Gender
 	return
 }
 
@@ -153,6 +159,9 @@ func (d *SQLDatabase) Init() error {
 			Labels    []string `gorm:"column:labels;type:json;not null"`
 			Subscribe []string `gorm:"column:subscribe;type:json;not null"`
 			Comment   string   `gorm:"column:comment;type:text;not null"`
+			Age       int      `gorm:"column:age;type:int;not null"`
+			Address   string   `gorm:"column:address;type:text;not null"`
+			Gender    string   `gorm:"column:gender;type:text;not null"`
 		}
 		type Feedback struct {
 			FeedbackType string    `gorm:"column:feedback_type;type:varchar(256);not null;primaryKey"`

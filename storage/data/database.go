@@ -116,6 +116,9 @@ type ItemPatch struct {
 	Timestamp  *time.Time
 	Labels     any
 	Comment    *string
+	Address    *string
+	Age        *int
+	Gender     *string
 }
 
 // User stores meta data about user.
@@ -124,6 +127,9 @@ type User struct {
 	Labels    any      `gorm:"serializer:json" mapstructure:"labels"`
 	Subscribe []string `gorm:"serializer:json" mapstructure:"subscribe"`
 	Comment   string   `mapstructure:"comment"`
+	Address   string   `mapstructure:"comment"`
+	Age       int      `mapstructure:"age"`
+	Gender    string   `mapstructure:"gender"`
 }
 
 // UserPatch is the modification on a user.
@@ -131,6 +137,9 @@ type UserPatch struct {
 	Labels    any
 	Subscribe []string
 	Comment   *string
+	Address   *string
+	Age       *int
+	Gender    *string
 }
 
 // FeedbackKey identifies feedback.
