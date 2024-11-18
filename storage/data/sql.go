@@ -189,6 +189,9 @@ func (d *SQLDatabase) Init() error {
 			Labels    string `gorm:"column:labels;type:json;not null;default:'[]'"`
 			Subscribe string `gorm:"column:subscribe;type:json;not null;default:'[]'"`
 			Comment   string `gorm:"column:comment;type:text;not null;default:''"`
+			Age       int    `gorm:"column:age;type:int;not null"`
+			Address   string `gorm:"column:address;type:text;not null"`
+			Gender    string `gorm:"column:gender;type:text;not null"`
 		}
 		type Feedback struct {
 			FeedbackType string    `gorm:"column:feedback_type;type:varchar(256);not null;primaryKey"`
@@ -216,6 +219,9 @@ func (d *SQLDatabase) Init() error {
 			Labels    string `gorm:"column:labels;type:json;not null;default:'null'"`
 			Subscribe string `gorm:"column:subscribe;type:json;not null;default:'null'"`
 			Comment   string `gorm:"column:comment;type:text;not null;default:''"`
+			Age       int    `gorm:"column:age;type:int;not null"`
+			Address   string `gorm:"column:address;type:text;not null"`
+			Gender    string `gorm:"column:gender;type:text;not null"`
 		}
 		type Feedback struct {
 			FeedbackType string `gorm:"column:feedback_type;type:varchar(256);not null;primaryKey"`
@@ -249,6 +255,9 @@ func (d *SQLDatabase) Init() error {
 			Subscribe string   `gorm:"column:subscribe;type:String;default:'[]'"`
 			Comment   string   `gorm:"column:comment;type:String"`
 			Version   struct{} `gorm:"column:version;type:DateTime"`
+			Age       int      `gorm:"column:age;type:Int64"`
+			Address   string   `gorm:"column:address;type:Text;not null"`
+			Gender    string   `gorm:"column:gender;type:Text;not null"`
 		}
 		err = d.gormDB.Set("gorm:table_options", "ENGINE = ReplacingMergeTree(version) ORDER BY user_id").AutoMigrate(Users{})
 		if err != nil {
@@ -590,9 +599,13 @@ func (d *SQLDatabase) BatchInsertUsers(ctx context.Context, users []User) error 
 				rows = append(rows, NewSQLUser(user))
 			}
 		}
+		// 使用 GORM 的 WithContext 方法设置操作的上下文
 		err := d.gormDB.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "user_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"labels", "subscribe", "comment"}),
+			// 定义冲突的列，这里是 user_id
+			Columns: []clause.Column{{Name: "user_id"}},
+			// 定义冲突时的更新操作，这里更新 labels、subscribe、comment、age、address 和 gender 列
+			DoUpdates: clause.AssignmentColumns([]string{"labels", "subscribe", "comment", "age", "address", "gender"}),
+			// 创建新的记录，如果存在冲突则根据 DoUpdates 进行更新
 		}).Create(rows).Error
 		return errors.Trace(err)
 	}
@@ -622,7 +635,7 @@ func (d *SQLDatabase) GetUser(ctx context.Context, userId string) (User, error) 
 	var result *sql.Rows
 	var err error
 	result, err = d.gormDB.WithContext(ctx).Table(d.UsersTable()).
-		Select("user_id, labels, subscribe, comment").
+		Select("user_id, labels, subscribe, comment, age, address, gender").
 		Where("user_id = ?", userId).Rows()
 	if err != nil {
 		return User{}, errors.Trace(err)
@@ -657,6 +670,15 @@ func (d *SQLDatabase) ModifyUser(ctx context.Context, userId string, patch UserP
 		text, _ := jsonutil.Marshal(patch.Subscribe)
 		attributes["subscribe"] = string(text)
 	}
+	if patch.Age != nil {
+		attributes["age"] = *patch.Age
+	}
+	if patch.Address != nil {
+		attributes["address"] = *patch.Address
+	}
+	if patch.Gender != nil {
+		attributes["gender"] = *patch.Gender
+	}
 	err := d.gormDB.WithContext(ctx).Model(&SQLUser{UserId: userId}).Updates(attributes).Error
 	return errors.Trace(err)
 }
@@ -668,7 +690,7 @@ func (d *SQLDatabase) GetUsers(ctx context.Context, cursor string, n int) (strin
 		return "", nil, errors.Trace(err)
 	}
 	cursorUser := string(buf)
-	tx := d.gormDB.WithContext(ctx).Table(d.UsersTable()).Select("user_id, labels, subscribe, comment")
+	tx := d.gormDB.WithContext(ctx).Table(d.UsersTable()).Select("user_id, labels, subscribe, comment, age, address, gender")
 	if cursorUser != "" {
 		tx.Where("user_id >= ?", cursorUser)
 	}
@@ -699,7 +721,7 @@ func (d *SQLDatabase) GetUserStream(ctx context.Context, batchSize int) (chan []
 		defer close(userChan)
 		defer close(errChan)
 		// send query
-		result, err := d.gormDB.WithContext(ctx).Table(d.UsersTable()).Select("user_id, labels, subscribe, comment").Rows()
+		result, err := d.gormDB.WithContext(ctx).Table(d.UsersTable()).Select("user_id, labels, subscribe, comment, age, address, gender").Rows()
 		if err != nil {
 			errChan <- errors.Trace(err)
 			return
