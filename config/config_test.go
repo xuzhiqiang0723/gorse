@@ -26,12 +26,17 @@ import (
 	"github.com/sclevine/yj/convert"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 )
 
 func TestUnmarshal(t *testing.T) {
 	data, err := os.ReadFile("config.toml")
 	assert.NoError(t, err)
 	text := string(data)
+	text = strings.Replace(text, "ssl_mode = false", "ssl_mode = true", -1)
+	text = strings.Replace(text, "ssl_ca = \"\"", "ssl_ca = \"ca.pem\"", -1)
+	text = strings.Replace(text, "ssl_cert = \"\"", "ssl_cert = \"cert.pem\"", -1)
+	text = strings.Replace(text, "ssl_key = \"\"", "ssl_key = \"key.pem\"", -1)
 	text = strings.Replace(text, "dashboard_user_name = \"\"", "dashboard_user_name = \"admin\"", -1)
 	text = strings.Replace(text, "dashboard_password = \"\"", "dashboard_password = \"password\"", -1)
 	text = strings.Replace(text, "admin_api_key = \"\"", "admin_api_key = \"super_api_key\"", -1)
@@ -41,6 +46,10 @@ func TestUnmarshal(t *testing.T) {
 	text = strings.Replace(text, "data_table_prefix = \"gorse_\"", "data_table_prefix = \"gorse_data_\"", -1)
 	text = strings.Replace(text, "http_cors_domains = []", "http_cors_domains = [\".*\"]", -1)
 	text = strings.Replace(text, "http_cors_methods = []", "http_cors_methods = [\"GET\",\"PATCH\",\"POST\"]", -1)
+	text = strings.Replace(text, "issuer = \"\"", "issuer = \"https://accounts.google.com\"", -1)
+	text = strings.Replace(text, "client_id = \"\"", "client_id = \"client_id\"", -1)
+	text = strings.Replace(text, "client_secret = \"\"", "client_secret = \"client_secret\"", -1)
+	text = strings.Replace(text, "redirect_url = \"\"", "redirect_url = \"http://localhost:8088/callback/oauth2\"", -1)
 	r, err := convert.TOML{}.Decode(bytes.NewBufferString(text))
 	assert.NoError(t, err)
 
@@ -61,9 +70,14 @@ func TestUnmarshal(t *testing.T) {
 			assert.Equal(t, "gorse_", config.Database.TablePrefix)
 			assert.Equal(t, "gorse_cache_", config.Database.CacheTablePrefix)
 			assert.Equal(t, "gorse_data_", config.Database.DataTablePrefix)
+			assert.Equal(t, "READ-UNCOMMITTED", config.Database.MySQL.IsolationLevel)
 			// [master]
 			assert.Equal(t, 8086, config.Master.Port)
 			assert.Equal(t, "0.0.0.0", config.Master.Host)
+			assert.Equal(t, true, config.Master.SSLMode)
+			assert.Equal(t, "ca.pem", config.Master.SSLCA)
+			assert.Equal(t, "cert.pem", config.Master.SSLCert)
+			assert.Equal(t, "key.pem", config.Master.SSLKey)
 			assert.Equal(t, 8088, config.Master.HttpPort)
 			assert.Equal(t, "0.0.0.0", config.Master.HttpHost)
 			assert.Equal(t, []string{".*"}, config.Master.HttpCorsDomains)
@@ -90,20 +104,16 @@ func TestUnmarshal(t *testing.T) {
 			assert.Equal(t, uint(0), config.Recommend.DataSource.ItemTTL)
 			// [recommend.popular]
 			assert.Equal(t, 30*24*time.Hour, config.Recommend.Popular.PopularWindow)
+			// [recommend.leaderboards]
+			assert.Len(t, config.Recommend.NonPersonalized, 1)
+			assert.Equal(t, "most_starred_weekly", config.Recommend.NonPersonalized[0].Name)
+			assert.Equal(t, "count(feedback, .FeedbackType == 'star')", config.Recommend.NonPersonalized[0].Score)
+			assert.Equal(t, "(now() - item.Timestamp).Hours() < 168", config.Recommend.NonPersonalized[0].Filter)
 			// [recommend.user_neighbors]
-			assert.Equal(t, "similar", config.Recommend.UserNeighbors.NeighborType)
-			assert.True(t, config.Recommend.UserNeighbors.EnableIndex)
-			assert.Equal(t, float32(0.8), config.Recommend.UserNeighbors.IndexRecall)
-			assert.Equal(t, 3, config.Recommend.UserNeighbors.IndexFitEpoch)
+			assert.Equal(t, "related", config.Recommend.UserNeighbors.NeighborType)
 			// [recommend.item_neighbors]
 			assert.Equal(t, "similar", config.Recommend.ItemNeighbors.NeighborType)
-			assert.True(t, config.Recommend.ItemNeighbors.EnableIndex)
-			assert.Equal(t, float32(0.8), config.Recommend.ItemNeighbors.IndexRecall)
-			assert.Equal(t, 3, config.Recommend.ItemNeighbors.IndexFitEpoch)
 			// [recommend.collaborative]
-			assert.True(t, config.Recommend.Collaborative.EnableIndex)
-			assert.Equal(t, float32(0.9), config.Recommend.Collaborative.IndexRecall)
-			assert.Equal(t, 3, config.Recommend.Collaborative.IndexFitEpoch)
 			assert.Equal(t, 60*time.Minute, config.Recommend.Collaborative.ModelFitPeriod)
 			assert.Equal(t, 360*time.Minute, config.Recommend.Collaborative.ModelSearchPeriod)
 			assert.Equal(t, 100, config.Recommend.Collaborative.ModelSearchEpoch)
@@ -142,6 +152,11 @@ func TestUnmarshal(t *testing.T) {
 			assert.Equal(t, 1.0, config.Tracing.Ratio)
 			// [experimental]
 			assert.Equal(t, 128, config.Experimental.DeepLearningBatchSize)
+			// [oauth2]
+			assert.Equal(t, "https://accounts.google.com", config.OIDC.Issuer)
+			assert.Equal(t, "client_id", config.OIDC.ClientID)
+			assert.Equal(t, "client_secret", config.OIDC.ClientSecret)
+			assert.Equal(t, "http://localhost:8088/callback/oauth2", config.OIDC.RedirectURL)
 		})
 	}
 }
@@ -171,6 +186,10 @@ func TestBindEnv(t *testing.T) {
 		{"GORSE_CACHE_TABLE_PREFIX", "gorse_cache_"},
 		{"GORSE_MASTER_PORT", "123"},
 		{"GORSE_MASTER_HOST", "<master_host>"},
+		{"GORSE_MASTER_SSL_MODE", "true"},
+		{"GORSE_MASTER_SSL_CA", "ca.pem"},
+		{"GORSE_MASTER_SSL_CERT", "cert.pem"},
+		{"GORSE_MASTER_SSL_KEY", "key.pem"},
 		{"GORSE_MASTER_HTTP_PORT", "456"},
 		{"GORSE_MASTER_HTTP_HOST", "<master_http_host>"},
 		{"GORSE_MASTER_JOBS", "789"},
@@ -180,6 +199,11 @@ func TestBindEnv(t *testing.T) {
 		{"GORSE_DASHBOARD_REDACTED", "true"},
 		{"GORSE_ADMIN_API_KEY", "<admin_api_key>"},
 		{"GORSE_SERVER_API_KEY", "<server_api_key>"},
+		{"GORSE_OIDC_ENABLE", "true"},
+		{"GORSE_OIDC_ISSUER", "https://accounts.google.com"},
+		{"GORSE_OIDC_CLIENT_ID", "client_id"},
+		{"GORSE_OIDC_CLIENT_SECRET", "client_secret"},
+		{"GORSE_OIDC_REDIRECT_URL", "http://localhost:8088/callback/oauth2"},
 	}
 	for _, variable := range variables {
 		t.Setenv(variable.key, variable.value)
@@ -194,15 +218,23 @@ func TestBindEnv(t *testing.T) {
 	assert.Equal(t, "gorse_data_", config.Database.DataTablePrefix)
 	assert.Equal(t, 123, config.Master.Port)
 	assert.Equal(t, "<master_host>", config.Master.Host)
+	assert.Equal(t, true, config.Master.SSLMode)
+	assert.Equal(t, "ca.pem", config.Master.SSLCA)
+	assert.Equal(t, "cert.pem", config.Master.SSLCert)
+	assert.Equal(t, "key.pem", config.Master.SSLKey)
 	assert.Equal(t, 456, config.Master.HttpPort)
 	assert.Equal(t, "<master_http_host>", config.Master.HttpHost)
 	assert.Equal(t, 789, config.Master.NumJobs)
 	assert.Equal(t, "user_name", config.Master.DashboardUserName)
 	assert.Equal(t, "password", config.Master.DashboardPassword)
-	assert.Equal(t, "http://127.0.0.1:8888", config.Master.DashboardAuthServer)
 	assert.Equal(t, true, config.Master.DashboardRedacted)
 	assert.Equal(t, "<admin_api_key>", config.Master.AdminAPIKey)
 	assert.Equal(t, "<server_api_key>", config.Server.APIKey)
+	assert.Equal(t, true, config.OIDC.Enable)
+	assert.Equal(t, "https://accounts.google.com", config.OIDC.Issuer)
+	assert.Equal(t, "client_id", config.OIDC.ClientID)
+	assert.Equal(t, "client_secret", config.OIDC.ClientSecret)
+	assert.Equal(t, "http://localhost:8088/callback/oauth2", config.OIDC.RedirectURL)
 
 	// check default values
 	assert.Equal(t, 100, config.Recommend.CacheSize)
@@ -233,11 +265,6 @@ func TestConfig_UserNeighborDigest(t *testing.T) {
 	assert.NotEqual(t, cfg1.UserNeighborDigest(), cfg2.UserNeighborDigest())
 
 	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.UserNeighbors.EnableIndex = true
-	cfg2.Recommend.UserNeighbors.EnableIndex = false
-	assert.NotEqual(t, cfg1.UserNeighborDigest(), cfg2.UserNeighborDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
 	cfg1.Recommend.UserNeighbors.NeighborType = "auto"
 	cfg2.Recommend.UserNeighbors.NeighborType = "auto"
 	cfg1.Recommend.DataSource.PositiveFeedbackTypes = []string{"positive"}
@@ -257,31 +284,12 @@ func TestConfig_UserNeighborDigest(t *testing.T) {
 	cfg1.Recommend.DataSource.PositiveFeedbackTypes = []string{"positive"}
 	cfg2.Recommend.DataSource.PositiveFeedbackTypes = []string{"negative"}
 	assert.Equal(t, cfg1.UserNeighborDigest(), cfg2.UserNeighborDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.UserNeighbors.EnableIndex = true
-	cfg2.Recommend.UserNeighbors.EnableIndex = true
-	cfg1.Recommend.UserNeighbors.IndexRecall = 0.5
-	cfg2.Recommend.UserNeighbors.IndexRecall = 0.6
-	assert.NotEqual(t, cfg1.UserNeighborDigest(), cfg2.UserNeighborDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.UserNeighbors.EnableIndex = true
-	cfg2.Recommend.UserNeighbors.EnableIndex = true
-	cfg1.Recommend.UserNeighbors.IndexFitEpoch = 10
-	cfg2.Recommend.UserNeighbors.IndexFitEpoch = 11
-	assert.NotEqual(t, cfg1.UserNeighborDigest(), cfg2.UserNeighborDigest())
 }
 
 func TestConfig_ItemNeighborDigest(t *testing.T) {
 	cfg1, cfg2 := GetDefaultConfig(), GetDefaultConfig()
 	cfg1.Recommend.ItemNeighbors.NeighborType = "auto"
 	cfg2.Recommend.ItemNeighbors.NeighborType = "related"
-	assert.NotEqual(t, cfg1.ItemNeighborDigest(), cfg2.ItemNeighborDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.ItemNeighbors.EnableIndex = true
-	cfg2.Recommend.ItemNeighbors.EnableIndex = false
 	assert.NotEqual(t, cfg1.ItemNeighborDigest(), cfg2.ItemNeighborDigest())
 
 	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
@@ -304,20 +312,6 @@ func TestConfig_ItemNeighborDigest(t *testing.T) {
 	cfg1.Recommend.DataSource.PositiveFeedbackTypes = []string{"positive"}
 	cfg2.Recommend.DataSource.PositiveFeedbackTypes = []string{"negative"}
 	assert.Equal(t, cfg1.ItemNeighborDigest(), cfg2.ItemNeighborDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.ItemNeighbors.EnableIndex = true
-	cfg2.Recommend.ItemNeighbors.EnableIndex = true
-	cfg1.Recommend.ItemNeighbors.IndexRecall = 0.5
-	cfg2.Recommend.ItemNeighbors.IndexRecall = 0.6
-	assert.NotEqual(t, cfg1.ItemNeighborDigest(), cfg2.ItemNeighborDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.ItemNeighbors.EnableIndex = true
-	cfg2.Recommend.ItemNeighbors.EnableIndex = true
-	cfg1.Recommend.ItemNeighbors.IndexFitEpoch = 10
-	cfg2.Recommend.ItemNeighbors.IndexFitEpoch = 11
-	assert.NotEqual(t, cfg1.ItemNeighborDigest(), cfg2.ItemNeighborDigest())
 }
 
 func TestConfig_OfflineRecommendDigest(t *testing.T) {
@@ -394,26 +388,6 @@ func TestConfig_OfflineRecommendDigest(t *testing.T) {
 	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
 	cfg1.Recommend.Offline.EnableColRecommend = true
 	cfg2.Recommend.Offline.EnableColRecommend = true
-	cfg1.Recommend.Collaborative.EnableIndex = true
-	cfg2.Recommend.Collaborative.EnableIndex = false
-	assert.NotEqual(t, cfg1.OfflineRecommendDigest(), cfg2.OfflineRecommendDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.Offline.EnableColRecommend = true
-	cfg2.Recommend.Offline.EnableColRecommend = true
-	cfg1.Recommend.Collaborative.EnableIndex = true
-	cfg2.Recommend.Collaborative.EnableIndex = true
-	cfg1.Recommend.Collaborative.IndexRecall = 0.4
-	cfg2.Recommend.Collaborative.IndexRecall = 0.5
-	assert.NotEqual(t, cfg1.OfflineRecommendDigest(), cfg2.OfflineRecommendDigest())
-
-	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
-	cfg1.Recommend.Offline.EnableColRecommend = true
-	cfg2.Recommend.Offline.EnableColRecommend = true
-	cfg1.Recommend.Collaborative.EnableIndex = false
-	cfg2.Recommend.Collaborative.EnableIndex = false
-	cfg1.Recommend.Collaborative.IndexRecall = 0.4
-	cfg2.Recommend.Collaborative.IndexRecall = 0.5
 	assert.Equal(t, cfg1.OfflineRecommendDigest(), cfg2.OfflineRecommendDigest())
 
 	cfg1, cfg2 = GetDefaultConfig(), GetDefaultConfig()
@@ -451,4 +425,59 @@ func TestConfig_OfflineRecommendDigest(t *testing.T) {
 	cfg1.Recommend.Replacement.PositiveReplacementDecay = 0.1
 	cfg2.Recommend.Replacement.PositiveReplacementDecay = 0.2
 	assert.Equal(t, cfg1.OfflineRecommendDigest(), cfg2.OfflineRecommendDigest())
+}
+
+func TestItemToItemConfig_Hash(t *testing.T) {
+	a := ItemToItemConfig{}
+	b := ItemToItemConfig{}
+	assert.Equal(t, a.Hash(), b.Hash())
+
+	a = ItemToItemConfig{Name: "a"}
+	b = ItemToItemConfig{Name: "b"}
+	assert.NotEqual(t, a.Hash(), b.Hash())
+
+	a = ItemToItemConfig{Type: "a"}
+	b = ItemToItemConfig{Type: "b"}
+	assert.NotEqual(t, a.Hash(), b.Hash())
+
+	a = ItemToItemConfig{Column: "a"}
+	b = ItemToItemConfig{Column: "b"}
+	assert.NotEqual(t, a.Hash(), b.Hash())
+}
+
+type ValidateTestSuite struct {
+	suite.Suite
+	*Config
+}
+
+func (s *ValidateTestSuite) SetupTest() {
+	s.Config = GetDefaultConfig()
+	s.Database.CacheStore = "redis://localhost:6379/0"
+	s.Database.DataStore = "mysql://gorse:gorse_pass@tcp(localhost:3306)/gorse"
+}
+
+func (s *ValidateTestSuite) TestDuplicateNonPersonalized() {
+	s.Recommend.NonPersonalized = []NonPersonalizedConfig{{
+		Name:  "most_starred_weekly",
+		Score: "count(feedback, .FeedbackType == 'star')",
+	}, {
+		Name:  "most_starred_weekly",
+		Score: "count(feedback, .FeedbackType == 'star')",
+	}}
+	s.Error(s.Validate())
+}
+
+func (s *ValidateTestSuite) TestDuplicateItemToItem() {
+	s.Recommend.ItemToItem = []ItemToItemConfig{{
+		Name: "item_to_item",
+		Type: "users",
+	}, {
+		Name: "item_to_item",
+		Type: "users",
+	}}
+	s.Error(s.Validate())
+}
+
+func TestValidate(t *testing.T) {
+	suite.Run(t, new(ValidateTestSuite))
 }

@@ -26,7 +26,7 @@ import (
 	"github.com/zhenghaoz/gorse/storage/data"
 )
 
-func (s *MasterTestSuite) TestFindItemNeighborsBruteForce() {
+func (s *MasterTestSuite) TestFindItemNeighbors() {
 	ctx := context.Background()
 	// create config
 	s.Config = &config.Config{}
@@ -81,35 +81,34 @@ func (s *MasterTestSuite) TestFindItemNeighborsBruteForce() {
 	}
 
 	// load mock dataset
-	dataset, _, _, _, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"}, nil, 0, 0, NewOnlineEvaluator())
+	dataset, _, dataSet, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"},
+		nil, 0, 0, NewOnlineEvaluator(), nil)
 	s.NoError(err)
 	s.rankingTrainSet = dataset
 
 	// similar items (common users)
 	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeRelated
-	neighborTask := NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err := s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "9", []string{""}, 0, 100)
+	s.NoError(s.updateItemToItem(dataSet))
+	similar, err := s.CacheClient.SearchScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "9"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
 	// similar items in category (common users)
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "9", []string{"*"}, 0, 100)
+	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "9"), []string{"*"}, 0, 100)
 	s.NoError(err)
-	s.Equal([]string{"7", "5", "1"}, cache.ConvertDocumentsToValues(similar))
+	s.Equal([]string{"7", "5"}, cache.ConvertDocumentsToValues(similar))
 
 	// similar items (common labels)
 	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "8"), time.Now()))
 	s.NoError(err)
 	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeSimilar
-	neighborTask = NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "8", []string{""}, 0, 100)
+	s.NoError(s.updateItemToItem(dataSet))
+	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "8"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
 	// similar items in category (common labels)
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "8", []string{"*"}, 0, 100)
+	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "8"), []string{"*"}, 0, 100)
 	s.NoError(err)
-	s.Equal([]string{"0", "2", "6"}, cache.ConvertDocumentsToValues(similar))
+	s.Equal([]string{"0", "2"}, cache.ConvertDocumentsToValues(similar))
 
 	// similar items (auto)
 	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "8"), time.Now()))
@@ -117,164 +116,16 @@ func (s *MasterTestSuite) TestFindItemNeighborsBruteForce() {
 	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "9"), time.Now()))
 	s.NoError(err)
 	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeAuto
-	neighborTask = NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "8", []string{""}, 0, 100)
+	s.NoError(s.updateItemToItem(dataSet))
+	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "8"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "9", []string{""}, 0, 100)
+	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "9"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
 }
 
-func (s *MasterTestSuite) TestFindItemNeighborsIVF() {
-	// create mock master
-	ctx := context.Background()
-	// create config
-	s.Config = &config.Config{}
-	s.Config.Recommend.CacheSize = 3
-	s.Config.Master.NumJobs = 4
-	s.Config.Recommend.ItemNeighbors.EnableIndex = true
-	s.Config.Recommend.ItemNeighbors.IndexRecall = 1
-	s.Config.Recommend.ItemNeighbors.IndexFitEpoch = 10
-	// collect similar
-	items := []data.Item{
-		{ItemId: "0", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{"a", "b", "c", "d"}, Comment: ""},
-		{ItemId: "1", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{}, Comment: ""},
-		{ItemId: "2", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{"b", "c", "d"}, Comment: ""},
-		{ItemId: "3", IsHidden: false, Categories: nil, Timestamp: time.Now(), Labels: []string{}, Comment: ""},
-		{ItemId: "4", IsHidden: false, Categories: nil, Timestamp: time.Now(), Labels: []string{"b", "c"}, Comment: ""},
-		{ItemId: "5", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{}, Comment: ""},
-		{ItemId: "6", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{"c"}, Comment: ""},
-		{ItemId: "7", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{}, Comment: ""},
-		{ItemId: "8", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{"a", "b", "c", "d", "e"}, Comment: ""},
-		{ItemId: "9", IsHidden: false, Categories: nil, Timestamp: time.Now(), Labels: []string{}, Comment: ""},
-	}
-	feedbacks := make([]data.Feedback, 0)
-	for i := 0; i < 10; i++ {
-		for j := 0; j <= i; j++ {
-			if i%2 == 1 {
-				feedbacks = append(feedbacks, data.Feedback{
-					FeedbackKey: data.FeedbackKey{
-						ItemId:       strconv.Itoa(i),
-						UserId:       strconv.Itoa(j),
-						FeedbackType: "FeedbackType",
-					},
-					Timestamp: time.Now(),
-				})
-			}
-		}
-	}
-	var err error
-	err = s.DataClient.BatchInsertItems(ctx, items)
-	s.NoError(err)
-	err = s.DataClient.BatchInsertFeedback(ctx, feedbacks, true, true, true)
-	s.NoError(err)
-
-	// insert hidden item
-	err = s.DataClient.BatchInsertItems(ctx, []data.Item{{
-		ItemId:   "10",
-		Labels:   []string{"a", "b", "c", "d", "e"},
-		IsHidden: true,
-	}})
-	s.NoError(err)
-	for i := 0; i <= 10; i++ {
-		err = s.DataClient.BatchInsertFeedback(ctx, []data.Feedback{{
-			FeedbackKey: data.FeedbackKey{UserId: strconv.Itoa(i), ItemId: "10", FeedbackType: "FeedbackType"},
-		}}, true, true, true)
-		s.NoError(err)
-	}
-
-	// load mock dataset
-	dataset, _, _, _, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"}, nil, 0, 0, NewOnlineEvaluator())
-	s.NoError(err)
-	s.rankingTrainSet = dataset
-
-	// similar items (common users)
-	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeRelated
-	neighborTask := NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err := s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "9", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
-	// similar items in category (common users)
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "9", []string{"*"}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"7", "5", "1"}, cache.ConvertDocumentsToValues(similar))
-
-	// similar items (common labels)
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "8"), time.Now()))
-	s.NoError(err)
-	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeSimilar
-	neighborTask = NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "8", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
-	// similar items in category (common labels)
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "8", []string{"*"}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"0", "2", "6"}, cache.ConvertDocumentsToValues(similar))
-
-	// similar items (auto)
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "8"), time.Now()))
-	s.NoError(err)
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "9"), time.Now()))
-	s.NoError(err)
-	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeAuto
-	neighborTask = NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "8", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "9", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
-}
-
-func (s *MasterTestSuite) TestFindItemNeighborsIVF_ZeroIDF() {
-	ctx := context.Background()
-	// create config
-	s.Config = &config.Config{}
-	s.Config.Recommend.CacheSize = 3
-	s.Config.Master.NumJobs = 4
-	s.Config.Recommend.ItemNeighbors.EnableIndex = true
-	s.Config.Recommend.ItemNeighbors.IndexRecall = 1
-	s.Config.Recommend.ItemNeighbors.IndexFitEpoch = 10
-
-	// create dataset
-	err := s.DataClient.BatchInsertItems(ctx, []data.Item{
-		{ItemId: "0", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{"a", "a"}, Comment: ""},
-		{ItemId: "1", IsHidden: false, Categories: []string{"*"}, Timestamp: time.Now(), Labels: []string{"a", "a"}, Comment: ""},
-	})
-	s.NoError(err)
-	err = s.DataClient.BatchInsertFeedback(ctx, []data.Feedback{
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "FeedbackType", UserId: "0", ItemId: "0"}},
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "FeedbackType", UserId: "0", ItemId: "1"}},
-	}, true, true, true)
-	s.NoError(err)
-	dataset, _, _, _, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"}, nil, 0, 0, NewOnlineEvaluator())
-	s.NoError(err)
-	s.rankingTrainSet = dataset
-
-	// similar items (common users)
-	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeRelated
-	neighborTask := NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err := s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "0", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"1"}, cache.ConvertDocumentsToValues(similar))
-
-	// similar items (common labels)
-	s.Config.Recommend.ItemNeighbors.NeighborType = config.NeighborTypeSimilar
-	neighborTask = NewFindItemNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.ItemNeighbors, "0", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"1"}, cache.ConvertDocumentsToValues(similar))
-}
-
-func (s *MasterTestSuite) TestFindUserNeighborsBruteForce() {
+func (s *MasterTestSuite) TestFindUserNeighbors() {
 	ctx := context.Background()
 	// create config
 	s.Config = &config.Config{}
@@ -313,15 +164,15 @@ func (s *MasterTestSuite) TestFindUserNeighborsBruteForce() {
 	s.NoError(err)
 	err = s.DataClient.BatchInsertFeedback(ctx, feedbacks, true, true, true)
 	s.NoError(err)
-	dataset, _, _, _, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"}, nil, 0, 0, NewOnlineEvaluator())
+	dataset, _, dataSet, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"},
+		nil, 0, 0, NewOnlineEvaluator(), nil)
 	s.NoError(err)
 	s.rankingTrainSet = dataset
 
 	// similar items (common users)
 	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeRelated
-	neighborTask := NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err := s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "9", []string{""}, 0, 100)
+	s.NoError(s.updateUserToUser(dataSet))
+	similar, err := s.CacheClient.SearchScores(ctx, cache.UserToUser, cache.Key(cache.Neighbors, "9"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
 
@@ -329,9 +180,8 @@ func (s *MasterTestSuite) TestFindUserNeighborsBruteForce() {
 	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyUserTime, "8"), time.Now()))
 	s.NoError(err)
 	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeSimilar
-	neighborTask = NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "8", []string{""}, 0, 100)
+	s.NoError(s.updateUserToUser(dataSet))
+	similar, err = s.CacheClient.SearchScores(ctx, cache.UserToUser, cache.Key(cache.Neighbors, "8"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
 
@@ -341,136 +191,13 @@ func (s *MasterTestSuite) TestFindUserNeighborsBruteForce() {
 	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyUserTime, "9"), time.Now()))
 	s.NoError(err)
 	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeAuto
-	neighborTask = NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "8", []string{""}, 0, 100)
+	s.NoError(s.updateUserToUser(dataSet))
+	similar, err = s.CacheClient.SearchScores(ctx, cache.UserToUser, cache.Key(cache.Neighbors, "8"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "9", []string{""}, 0, 100)
+	similar, err = s.CacheClient.SearchScores(ctx, cache.UserToUser, cache.Key(cache.Neighbors, "9"), nil, 0, 100)
 	s.NoError(err)
 	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
-}
-
-func (s *MasterTestSuite) TestFindUserNeighborsIVF() {
-	ctx := context.Background()
-	// create config
-	s.Config = &config.Config{}
-	s.Config.Recommend.CacheSize = 3
-	s.Config.Master.NumJobs = 4
-	s.Config.Recommend.UserNeighbors.EnableIndex = true
-	s.Config.Recommend.UserNeighbors.IndexRecall = 1
-	s.Config.Recommend.UserNeighbors.IndexFitEpoch = 10
-	// collect similar
-	users := []data.User{
-		{UserId: "0", Labels: []string{"a", "b", "c", "d"}, Subscribe: nil, Comment: ""},
-		{UserId: "1", Labels: []string{}, Subscribe: nil, Comment: ""},
-		{UserId: "2", Labels: []string{"b", "c", "d"}, Subscribe: nil, Comment: ""},
-		{UserId: "3", Labels: []string{}, Subscribe: nil, Comment: ""},
-		{UserId: "4", Labels: []string{"b", "c"}, Subscribe: nil, Comment: ""},
-		{UserId: "5", Labels: []string{}, Subscribe: nil, Comment: ""},
-		{UserId: "6", Labels: []string{"c"}, Subscribe: nil, Comment: ""},
-		{UserId: "7", Labels: []string{}, Subscribe: nil, Comment: ""},
-		{UserId: "8", Labels: []string{"a", "b", "c", "d", "e"}, Subscribe: nil, Comment: ""},
-		{UserId: "9", Labels: []string{}, Subscribe: nil, Comment: ""},
-	}
-	feedbacks := make([]data.Feedback, 0)
-	for i := 0; i < 10; i++ {
-		for j := 0; j <= i; j++ {
-			if i%2 == 1 {
-				feedbacks = append(feedbacks, data.Feedback{
-					FeedbackKey: data.FeedbackKey{
-						ItemId:       strconv.Itoa(j),
-						UserId:       strconv.Itoa(i),
-						FeedbackType: "FeedbackType",
-					},
-					Timestamp: time.Now(),
-				})
-			}
-		}
-	}
-	var err error
-	err = s.DataClient.BatchInsertUsers(ctx, users)
-	s.NoError(err)
-	err = s.DataClient.BatchInsertFeedback(ctx, feedbacks, true, true, true)
-	s.NoError(err)
-	dataset, _, _, _, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"}, nil, 0, 0, NewOnlineEvaluator())
-	s.NoError(err)
-	s.rankingTrainSet = dataset
-
-	// similar items (common users)
-	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeRelated
-	neighborTask := NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err := s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "9", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
-
-	// similar items (common labels)
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyUserTime, "8"), time.Now()))
-	s.NoError(err)
-	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeSimilar
-	neighborTask = NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "8", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
-
-	// similar items (auto)
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyUserTime, "8"), time.Now()))
-	s.NoError(err)
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyUserTime, "9"), time.Now()))
-	s.NoError(err)
-	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeAuto
-	neighborTask = NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "8", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"0", "2", "4"}, cache.ConvertDocumentsToValues(similar))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "9", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"7", "5", "3"}, cache.ConvertDocumentsToValues(similar))
-}
-
-func (s *MasterTestSuite) TestFindUserNeighborsIVF_ZeroIDF() {
-	ctx := context.Background()
-	// create config
-	s.Config = &config.Config{}
-	s.Config.Recommend.CacheSize = 3
-	s.Config.Master.NumJobs = 4
-	s.Config.Recommend.UserNeighbors.EnableIndex = true
-	s.Config.Recommend.UserNeighbors.IndexRecall = 1
-	s.Config.Recommend.UserNeighbors.IndexFitEpoch = 10
-
-	// create dataset
-	err := s.DataClient.BatchInsertUsers(ctx, []data.User{
-		{UserId: "0", Labels: []string{"a", "a"}, Subscribe: nil, Comment: ""},
-		{UserId: "1", Labels: []string{"a", "a"}, Subscribe: nil, Comment: ""},
-	})
-	s.NoError(err)
-	err = s.DataClient.BatchInsertFeedback(ctx, []data.Feedback{
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "FeedbackType", UserId: "0", ItemId: "0"}},
-		{FeedbackKey: data.FeedbackKey{FeedbackType: "FeedbackType", UserId: "1", ItemId: "0"}},
-	}, true, true, true)
-	s.NoError(err)
-	dataset, _, _, _, err := s.LoadDataFromDatabase(context.Background(), s.DataClient, []string{"FeedbackType"}, nil, 0, 0, NewOnlineEvaluator())
-	s.NoError(err)
-	s.rankingTrainSet = dataset
-
-	// similar users (common items)
-	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeRelated
-	neighborTask := NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err := s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "0", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"1"}, cache.ConvertDocumentsToValues(similar))
-
-	// similar users (common labels)
-	s.Config.Recommend.UserNeighbors.NeighborType = config.NeighborTypeSimilar
-	neighborTask = NewFindUserNeighborsTask(&s.Master)
-	s.NoError(neighborTask.run(context.Background(), nil))
-	similar, err = s.CacheClient.SearchScores(ctx, cache.UserNeighbors, "0", []string{""}, 0, 100)
-	s.NoError(err)
-	s.Equal([]string{"1"}, cache.ConvertDocumentsToValues(similar))
 }
 
 func (s *MasterTestSuite) TestLoadDataFromDatabase() {
@@ -568,7 +295,7 @@ func (s *MasterTestSuite) TestLoadDataFromDatabase() {
 	s.Equal(45, s.clickTrainSet.NegativeCount+s.clickTestSet.NegativeCount)
 
 	// check latest items
-	latest, err := s.CacheClient.SearchScores(ctx, cache.LatestItems, "", []string{""}, 0, 100)
+	latest, err := s.CacheClient.SearchScores(ctx, cache.NonPersonalized, cache.Latest, []string{""}, 0, 100)
 	s.NoError(err)
 	s.Equal([]cache.Score{
 		{Id: items[8].ItemId, Score: float64(items[8].Timestamp.Unix())},
@@ -577,7 +304,7 @@ func (s *MasterTestSuite) TestLoadDataFromDatabase() {
 	}, lo.Map(latest, func(document cache.Score, _ int) cache.Score {
 		return cache.Score{Id: document.Id, Score: document.Score}
 	}))
-	latest, err = s.CacheClient.SearchScores(ctx, cache.LatestItems, "", []string{"2"}, 0, 100)
+	latest, err = s.CacheClient.SearchScores(ctx, cache.NonPersonalized, cache.Latest, []string{"2"}, 0, 100)
 	s.NoError(err)
 	s.Equal([]cache.Score{
 		{Id: items[8].ItemId, Score: float64(items[8].Timestamp.Unix())},
@@ -588,7 +315,7 @@ func (s *MasterTestSuite) TestLoadDataFromDatabase() {
 	}))
 
 	// check popular items
-	popular, err := s.CacheClient.SearchScores(ctx, cache.PopularItems, "", []string{""}, 0, 3)
+	popular, err := s.CacheClient.SearchScores(ctx, cache.NonPersonalized, cache.Popular, []string{""}, 0, 3)
 	s.NoError(err)
 	s.Equal([]cache.Score{
 		{Id: items[8].ItemId, Score: 9},
@@ -597,7 +324,7 @@ func (s *MasterTestSuite) TestLoadDataFromDatabase() {
 	}, lo.Map(popular, func(document cache.Score, _ int) cache.Score {
 		return cache.Score{Id: document.Id, Score: document.Score}
 	}))
-	popular, err = s.CacheClient.SearchScores(ctx, cache.PopularItems, "", []string{"2"}, 0, 3)
+	popular, err = s.CacheClient.SearchScores(ctx, cache.NonPersonalized, cache.Popular, []string{"2"}, 0, 3)
 	s.NoError(err)
 	s.Equal([]cache.Score{
 		{Id: items[8].ItemId, Score: 9},
@@ -613,13 +340,94 @@ func (s *MasterTestSuite) TestLoadDataFromDatabase() {
 	s.Equal([]string{"0", "1", "2"}, categories)
 }
 
-func (s *MasterTestSuite) TestCheckItemNeighborCacheTimeout() {
+func (s *MasterTestSuite) TestNonPersonalizedRecommend() {
+	ctx := context.Background()
+	// create config
+	s.Config = &config.Config{}
+	s.Config.Recommend.CacheSize = 3
+	s.Config.Recommend.DataSource.PositiveFeedbackTypes = []string{"positive"}
+	s.Config.Recommend.DataSource.ReadFeedbackTypes = []string{"negative"}
+	s.Config.Master.NumJobs = runtime.NumCPU()
+
+	// insert items
+	var items []data.Item
+	for i := 0; i < 10; i++ {
+		items = append(items, data.Item{
+			ItemId:    strconv.Itoa(i),
+			Timestamp: time.Date(2000+i%2, 1, 1, i, 1, 0, 0, time.UTC),
+		})
+	}
+	err := s.DataClient.BatchInsertItems(ctx, items)
+	s.NoError(err)
+
+	// insert users
+	var users []data.User
+	for i := 0; i < 10; i++ {
+		users = append(users, data.User{
+			UserId: strconv.Itoa(i),
+		})
+	}
+	err = s.DataClient.BatchInsertUsers(ctx, users)
+	s.NoError(err)
+
+	// insert feedback
+	feedbacks := make([]data.Feedback, 0)
+	for i := 0; i < 10; i++ {
+		// positive feedback
+		// item 0: user 0
+		// ...
+		// item 8: user 0 ... user 8
+		if i%2 == 0 {
+			for j := 0; j <= i; j++ {
+				feedbacks = append(feedbacks, data.Feedback{
+					FeedbackKey: data.FeedbackKey{
+						ItemId:       strconv.Itoa(i),
+						UserId:       strconv.Itoa(j),
+						FeedbackType: "positive",
+					},
+					Timestamp: time.Now(),
+				})
+			}
+		}
+	}
+	err = s.DataClient.BatchInsertFeedback(ctx, feedbacks, false, false, true)
+	s.NoError(err)
+
+	// load dataset
+	err = s.runLoadDatasetTask()
+	s.NoError(err)
+
+	// check latest items
+	latest, err := s.CacheClient.SearchScores(ctx, cache.NonPersonalized, cache.Latest, []string{""}, 0, 3)
+	s.NoError(err)
+	s.Equal([]cache.Score{
+		{Id: items[9].ItemId, Score: float64(items[9].Timestamp.Unix())},
+		{Id: items[7].ItemId, Score: float64(items[7].Timestamp.Unix())},
+		{Id: items[5].ItemId, Score: float64(items[5].Timestamp.Unix())},
+	}, lo.Map(latest, func(document cache.Score, _ int) cache.Score {
+		return cache.Score{Id: document.Id, Score: document.Score}
+	}))
+
+	// check popular items
+	popular, err := s.CacheClient.SearchScores(ctx, cache.NonPersonalized, cache.Popular, []string{""}, 0, 3)
+	s.NoError(err)
+	s.Equal([]cache.Score{
+		{Id: items[8].ItemId, Score: 9},
+		{Id: items[6].ItemId, Score: 7},
+		{Id: items[4].ItemId, Score: 5},
+	}, lo.Map(popular, func(document cache.Score, _ int) cache.Score {
+		return cache.Score{Id: document.Id, Score: document.Score}
+	}))
+}
+
+func (s *MasterTestSuite) TestNeedUpdateItemToItem() {
 	s.Config = config.GetDefaultConfig()
+	recommendConfig := config.ItemToItemConfig{Name: cache.Neighbors}
 	ctx := context.Background()
 
 	// empty cache
-	s.True(s.checkItemNeighborCacheTimeout("1", nil))
-	err := s.CacheClient.AddScores(ctx, cache.ItemNeighbors, "1", []cache.Score{
+	s.True(s.needUpdateItemToItem("1", recommendConfig))
+	err := s.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "1"), []cache.Score{
 		{Id: "2", Score: 1, Categories: []string{""}},
 		{Id: "3", Score: 2, Categories: []string{""}},
 		{Id: "4", Score: 3, Categories: []string{""}},
@@ -627,34 +435,31 @@ func (s *MasterTestSuite) TestCheckItemNeighborCacheTimeout() {
 	s.NoError(err)
 
 	// digest mismatch
-	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.ItemNeighborsDigest, "1"), "digest"))
+	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.ItemToItemDigest, cache.Neighbors, "1"), "digest"))
 	s.NoError(err)
-	s.True(s.checkItemNeighborCacheTimeout("1", nil))
+	s.True(s.needUpdateItemToItem("1", recommendConfig))
 
 	// staled cache
-	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.ItemNeighborsDigest, "1"), s.Config.ItemNeighborDigest()))
+	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.ItemToItemDigest, cache.Neighbors, "1"), recommendConfig.Hash()))
 	s.NoError(err)
-	s.True(s.checkItemNeighborCacheTimeout("1", nil))
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, "1"), time.Now().Add(-time.Minute)))
+	s.True(s.needUpdateItemToItem("1", recommendConfig))
+	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.ItemToItemUpdateTime, cache.Neighbors, "1"), time.Now().Add(-s.Config.Recommend.CacheExpire)))
 	s.NoError(err)
-	s.True(s.checkItemNeighborCacheTimeout("1", nil))
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastUpdateItemNeighborsTime, "1"), time.Now().Add(-time.Hour)))
-	s.NoError(err)
-	s.True(s.checkItemNeighborCacheTimeout("1", nil))
+	s.True(s.needUpdateItemToItem("1", recommendConfig))
 
 	// not staled cache
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastUpdateItemNeighborsTime, "1"), time.Now()))
+	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.ItemToItemUpdateTime, cache.Neighbors, "1"), time.Now()))
 	s.NoError(err)
-	s.False(s.checkItemNeighborCacheTimeout("1", nil))
+	s.False(s.needUpdateItemToItem("1", recommendConfig))
 }
 
-func (s *MasterTestSuite) TestCheckUserNeighborCacheTimeout() {
+func (s *MasterTestSuite) TestNeedUpdateUserToUser() {
 	ctx := context.Background()
 	s.Config = config.GetDefaultConfig()
 
 	// empty cache
-	s.True(s.checkUserNeighborCacheTimeout("1"))
-	err := s.CacheClient.AddScores(ctx, cache.UserNeighbors, "1", []cache.Score{
+	s.True(s.needUpdateUserToUser("1"))
+	err := s.CacheClient.AddScores(ctx, cache.UserToUser, cache.Key(cache.Neighbors, "1"), []cache.Score{
 		{Id: "1", Score: 1, Categories: []string{""}},
 		{Id: "2", Score: 2, Categories: []string{""}},
 		{Id: "3", Score: 3, Categories: []string{""}},
@@ -662,23 +467,20 @@ func (s *MasterTestSuite) TestCheckUserNeighborCacheTimeout() {
 	s.NoError(err)
 
 	// digest mismatch
-	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.UserNeighborsDigest, "1"), "digest"))
+	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.UserToUserDigest, cache.Neighbors, "1"), "digest"))
 	s.NoError(err)
-	s.True(s.checkUserNeighborCacheTimeout("1"))
+	s.True(s.needUpdateUserToUser("1"))
 
 	// staled cache
-	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.UserNeighborsDigest, "1"), s.Config.UserNeighborDigest()))
+	err = s.CacheClient.Set(ctx, cache.String(cache.Key(cache.UserToUserDigest, cache.Neighbors, "1"), s.Config.UserNeighborDigest()))
 	s.NoError(err)
-	s.True(s.checkUserNeighborCacheTimeout("1"))
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyUserTime, "1"), time.Now().Add(-time.Minute)))
+	s.True(s.needUpdateUserToUser("1"))
+	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.UserToUserUpdateTime, cache.Neighbors, "1"), time.Now().Add(-s.Config.Recommend.CacheExpire)))
 	s.NoError(err)
-	s.True(s.checkUserNeighborCacheTimeout("1"))
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastUpdateUserNeighborsTime, "1"), time.Now().Add(-time.Hour)))
-	s.NoError(err)
-	s.True(s.checkUserNeighborCacheTimeout("1"))
+	s.True(s.needUpdateUserToUser("1"))
 
 	// not staled cache
-	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastUpdateUserNeighborsTime, "1"), time.Now()))
+	err = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.UserToUserUpdateTime, cache.Neighbors, "1"), time.Now()))
 	s.NoError(err)
-	s.False(s.checkUserNeighborCacheTimeout("1"))
+	s.False(s.needUpdateUserToUser("1"))
 }

@@ -17,13 +17,18 @@ package master
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/ReneKroon/ttlcache/v2"
+	"github.com/madflojo/testcerts"
 	"github.com/stretchr/testify/assert"
 	"github.com/zhenghaoz/gorse/base/progress"
+	"github.com/zhenghaoz/gorse/common/encoding"
+	"github.com/zhenghaoz/gorse/common/util"
 	"github.com/zhenghaoz/gorse/config"
 	"github.com/zhenghaoz/gorse/model"
 	"github.com/zhenghaoz/gorse/model/click"
@@ -32,6 +37,7 @@ import (
 	"github.com/zhenghaoz/gorse/server"
 	"github.com/zhenghaoz/gorse/storage/cache"
 	"github.com/zhenghaoz/gorse/storage/data"
+	"github.com/zhenghaoz/gorse/storage/meta"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -42,7 +48,12 @@ type mockMasterRPC struct {
 	grpcServer *grpc.Server
 }
 
-func newMockMasterRPC(_ *testing.T) *mockMasterRPC {
+func newMockMasterRPC(t *testing.T) *mockMasterRPC {
+	// create meta store
+	metaStore, err := meta.Open(fmt.Sprintf("sqlite://%s/meta.db", t.TempDir()), time.Second)
+	assert.NoError(t, err)
+	err = metaStore.Init()
+	assert.NoError(t, err)
 	// create click model
 	train, test := newClickDataset()
 	fm := click.NewFM(click.FMClassification, model.Params{model.NEpochs: 0})
@@ -53,7 +64,6 @@ func newMockMasterRPC(_ *testing.T) *mockMasterRPC {
 	bpr.Fit(context.Background(), trainSet, testSet, nil)
 	return &mockMasterRPC{
 		Master: Master{
-			nodesInfo:        make(map[string]*Node),
 			rankingModelName: "bpr",
 			RestServer: server.RestServer{
 				Settings: &config.Settings{
@@ -66,18 +76,13 @@ func newMockMasterRPC(_ *testing.T) *mockMasterRPC {
 					ClickModelVersion:   456,
 				},
 			},
+			metaStore: metaStore,
 		},
 		addr: make(chan string),
 	}
 }
 
 func (m *mockMasterRPC) Start(t *testing.T) {
-	m.ttlCache = ttlcache.NewCache()
-	m.ttlCache.SetExpirationCallback(m.nodeDown)
-	m.ttlCache.SetNewItemCallback(m.nodeUp)
-	err := m.ttlCache.SetTTL(time.Second)
-	assert.NoError(t, err)
-
 	listen, err := net.Listen("tcp", ":0")
 	assert.NoError(t, err)
 	m.addr <- listen.Addr().String()
@@ -88,13 +93,31 @@ func (m *mockMasterRPC) Start(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func (m *mockMasterRPC) StartTLS(t *testing.T, o *util.TLSConfig) {
+	listen, err := net.Listen("tcp", ":0")
+	assert.NoError(t, err)
+	m.addr <- listen.Addr().String()
+	creds, err := util.NewServerCreds(&util.TLSConfig{
+		SSLCA:   o.SSLCA,
+		SSLCert: o.SSLCert,
+		SSLKey:  o.SSLKey,
+	})
+	assert.NoError(t, err)
+	m.grpcServer = grpc.NewServer(grpc.Creds(creds))
+	protocol.RegisterMasterServer(m.grpcServer, m)
+	err = m.grpcServer.Serve(listen)
+	assert.NoError(t, err)
+}
+
 func (m *mockMasterRPC) Stop() {
+	_ = m.metaStore.Close()
 	m.grpcServer.Stop()
 }
 
 func TestRPC(t *testing.T) {
 	rpcServer := newMockMasterRPC(t)
 	go rpcServer.Start(t)
+	defer rpcServer.Stop()
 	address := <-rpcServer.addr
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	assert.NoError(t, err)
@@ -120,24 +143,24 @@ func TestRPC(t *testing.T) {
 	// test get click model
 	clickModelReceiver, err := client.GetClickModel(ctx, &protocol.VersionInfo{Version: 456})
 	assert.NoError(t, err)
-	clickModel, err := protocol.UnmarshalClickModel(clickModelReceiver)
+	clickModel, err := encoding.UnmarshalClickModel(clickModelReceiver)
 	assert.NoError(t, err)
 	assert.Equal(t, rpcServer.ClickModel, clickModel)
 
 	// test get ranking model
 	rankingModelReceiver, err := client.GetRankingModel(ctx, &protocol.VersionInfo{Version: 123})
 	assert.NoError(t, err)
-	rankingModel, err := protocol.UnmarshalRankingModel(rankingModelReceiver)
+	rankingModel, err := encoding.UnmarshalRankingModel(rankingModelReceiver)
 	assert.NoError(t, err)
 	rpcServer.RankingModel.SetParams(rpcServer.RankingModel.GetParams())
 	assert.Equal(t, rpcServer.RankingModel, rankingModel)
 
 	// test get meta
 	_, err = client.GetMeta(ctx,
-		&protocol.NodeInfo{NodeType: protocol.NodeType_ServerNode, NodeName: "server1", HttpPort: 1234})
+		&protocol.NodeInfo{NodeType: protocol.NodeType_Server, Uuid: "server1", Hostname: "yoga"})
 	assert.NoError(t, err)
 	metaResp, err := client.GetMeta(ctx,
-		&protocol.NodeInfo{NodeType: protocol.NodeType_WorkerNode, NodeName: "worker1", HttpPort: 1234})
+		&protocol.NodeInfo{NodeType: protocol.NodeType_Worker, Uuid: "worker1", Hostname: "yoga"})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(123), metaResp.RankingModelVersion)
 	assert.Equal(t, int64(456), metaResp.ClickModelVersion)
@@ -151,9 +174,71 @@ func TestRPC(t *testing.T) {
 
 	time.Sleep(time.Second * 2)
 	metaResp, err = client.GetMeta(ctx,
-		&protocol.NodeInfo{NodeType: protocol.NodeType_WorkerNode, NodeName: "worker2", HttpPort: 1234})
+		&protocol.NodeInfo{NodeType: protocol.NodeType_Worker, Uuid: "worker2", Hostname: "yoga"})
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"worker2"}, metaResp.Workers)
 
 	rpcServer.Stop()
+}
+
+func generateToTempFile(t *testing.T) (string, string, string) {
+	// Generate Certificate Authority
+	ca := testcerts.NewCA()
+	// Create a signed Certificate and Key
+	certs, err := ca.NewKeyPair()
+	assert.NoError(t, err)
+	// Write certificates to a file
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	certFile := filepath.Join(t.TempDir(), "cert.pem")
+	keyFile := filepath.Join(t.TempDir(), "key.pem")
+	pem := ca.PublicKey()
+	err = os.WriteFile(caFile, pem, 0640)
+	assert.NoError(t, err)
+	err = certs.ToFile(certFile, keyFile)
+	assert.NoError(t, err)
+	return caFile, certFile, keyFile
+}
+
+func TestSSL(t *testing.T) {
+	caFile, certFile, keyFile := generateToTempFile(t)
+	o := &util.TLSConfig{
+		SSLCA:   caFile,
+		SSLCert: certFile,
+		SSLKey:  keyFile,
+	}
+	rpcServer := newMockMasterRPC(t)
+	go rpcServer.StartTLS(t, o)
+	defer rpcServer.Stop()
+	address := <-rpcServer.addr
+
+	// success
+	c, err := util.NewClientCreds(o)
+	assert.NoError(t, err)
+	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(c))
+	assert.NoError(t, err)
+	client := protocol.NewMasterClient(conn)
+	_, err = client.GetMeta(context.Background(), &protocol.NodeInfo{NodeType: protocol.NodeType_Server, Uuid: "server1", Hostname: "yoga"})
+	assert.NoError(t, err)
+
+	// insecure
+	conn, err = grpc.Dial(address, grpc.WithInsecure())
+	assert.NoError(t, err)
+	client = protocol.NewMasterClient(conn)
+	_, err = client.GetMeta(context.Background(), &protocol.NodeInfo{NodeType: protocol.NodeType_Server, Uuid: "server1", Hostname: "yoga"})
+	assert.Error(t, err)
+
+	// certificate mismatch
+	caFile2, certFile2, keyFile2 := generateToTempFile(t)
+	o2 := &util.TLSConfig{
+		SSLCA:   caFile2,
+		SSLCert: certFile2,
+		SSLKey:  keyFile2,
+	}
+	c, err = util.NewClientCreds(o2)
+	assert.NoError(t, err)
+	conn, err = grpc.Dial(address, grpc.WithTransportCredentials(c))
+	assert.NoError(t, err)
+	client = protocol.NewMasterClient(conn)
+	_, err = client.GetMeta(context.Background(), &protocol.NodeInfo{NodeType: protocol.NodeType_Server, Uuid: "server1", Hostname: "yoga"})
+	assert.Error(t, err)
 }

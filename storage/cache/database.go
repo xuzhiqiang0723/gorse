@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -45,23 +46,6 @@ import (
 )
 
 const (
-	// ItemNeighbors is sorted set of neighbors for each item.
-	//  Global item neighbors      - item_neighbors/{item_id}
-	//  Categorized item neighbors - item_neighbors/{item_id}/{category}
-	ItemNeighbors = "item_neighbors"
-
-	// ItemNeighborsDigest is digest of item neighbors configuration
-	//	Item neighbors digest      - item_neighbors_digest/{item_id}
-	ItemNeighborsDigest = "item_neighbors_digest"
-
-	// UserNeighbors is sorted set of neighbors for each user.
-	//  User neighbors      - user_neighbors/{user_id}
-	UserNeighbors = "user_neighbors"
-
-	// UserNeighborsDigest is digest of user neighbors configuration
-	//  User neighbors digest      - user_neighbors_digest/{user_id}
-	UserNeighborsDigest = "user_neighbors_digest"
-
 	// CollaborativeRecommend is sorted set of collaborative filtering recommendations for each user.
 	//  Global recommendation      - collaborative_recommend/{user_id}
 	//  Categorized recommendation - collaborative_recommend/{user_id}/{category}
@@ -76,15 +60,17 @@ const (
 	//	Recommendation digest      - offline_recommend_digest/{user_id}
 	OfflineRecommendDigest = "offline_recommend_digest"
 
-	// PopularItems is sorted set of popular items. The format of key:
-	//  Global popular items      - latest_items
-	//  Categorized popular items - latest_items/{category}
-	PopularItems = "popular_items"
+	NonPersonalized = "non-personalized"
+	Latest          = "latest"
+	Popular         = "popular"
 
-	// LatestItems is sorted set of the latest items. The format of key:
-	//  Global latest items      - latest_items
-	//  Categorized the latest items - latest_items/{category}
-	LatestItems = "latest_items"
+	ItemToItem           = "item-to-item"
+	ItemToItemDigest     = "item-to-item_digest"
+	ItemToItemUpdateTime = "item-to-time_update_time"
+	UserToUser           = "user-to-user"
+	UserToUserDigest     = "user-to-user_digest"
+	UserToUserUpdateTime = "user-to-user_update_time"
+	Neighbors            = "neighbors"
 
 	// ItemCategories is the set of item categories. The format of key:
 	//	Global item categories - item_categories
@@ -93,8 +79,6 @@ const (
 	LastModifyItemTime          = "last_modify_item_time"           // the latest timestamp that a user related data was modified
 	LastModifyUserTime          = "last_modify_user_time"           // the latest timestamp that an item related data was modified
 	LastUpdateUserRecommendTime = "last_update_user_recommend_time" // the latest timestamp that a user's recommendation was updated
-	LastUpdateUserNeighborsTime = "last_update_user_neighbors_time" // the latest timestamp that a user's neighbors item was updated
-	LastUpdateItemNeighborsTime = "last_update_item_neighbors_time" // the latest timestamp that an item's neighbors was updated
 
 	// GlobalMeta is global meta information
 	GlobalMeta                 = "global_meta"
@@ -110,12 +94,14 @@ const (
 	LastFitRankingModelTime    = "last_fit_ranking_model_time"
 	LastUpdateLatestItemsTime  = "last_update_latest_items_time"  // the latest timestamp that latest items were updated
 	LastUpdatePopularItemsTime = "last_update_popular_items_time" // the latest timestamp that popular items were updated
-	UserNeighborIndexRecall    = "user_neighbor_index_recall"
-	ItemNeighborIndexRecall    = "item_neighbor_index_recall"
 	MatchingIndexRecall        = "matching_index_recall"
 )
 
-var ItemCache = []string{PopularItems, LatestItems, ItemNeighbors, OfflineRecommend}
+var ItemCache = []string{
+	NonPersonalized,
+	ItemToItem,
+	OfflineRecommend,
+}
 
 var (
 	ErrObjectNotExist = errors.NotFoundf("object")
@@ -293,14 +279,14 @@ type Database interface {
 	AddScores(ctx context.Context, collection, subset string, documents []Score) error
 	SearchScores(ctx context.Context, collection, subset string, query []string, begin, end int) ([]Score, error)
 	DeleteScores(ctx context.Context, collection []string, condition ScoreCondition) error
-	UpdateScores(ctx context.Context, collection []string, id string, patch ScorePatch) error
+	UpdateScores(ctx context.Context, collections []string, subset *string, id string, patch ScorePatch) error
 
 	AddTimeSeriesPoints(ctx context.Context, points []TimeSeriesPoint) error
 	GetTimeSeriesPoints(ctx context.Context, name string, begin, end time.Time) ([]TimeSeriesPoint, error)
 }
 
 // Open a connection to a database.
-func Open(path, tablePrefix string) (Database, error) {
+func Open(path, tablePrefix string, opts ...storage.Option) (Database, error) {
 	var err error
 	if strings.HasPrefix(path, storage.RedisPrefix) || strings.HasPrefix(path, storage.RedissPrefix) {
 		opt, err := redis.ParseURL(path)
@@ -310,6 +296,26 @@ func Open(path, tablePrefix string) (Database, error) {
 		opt.Protocol = 2
 		database := new(Redis)
 		database.client = redis.NewClient(opt)
+		database.TablePrefix = storage.TablePrefix(tablePrefix)
+		if err = redisotel.InstrumentTracing(database.client, redisotel.WithAttributes(semconv.DBSystemRedis)); err != nil {
+			log.Logger().Error("failed to add tracing for redis", zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		return database, nil
+	} else if strings.HasPrefix(path, storage.RedisClusterPrefix) || strings.HasPrefix(path, storage.RedissClusterPrefix) {
+		var newURL string
+		if strings.HasPrefix(path, storage.RedisClusterPrefix) {
+			newURL = strings.Replace(path, storage.RedisClusterPrefix, storage.RedisPrefix, 1)
+		} else if strings.HasPrefix(path, storage.RedissClusterPrefix) {
+			newURL = strings.Replace(path, storage.RedissClusterPrefix, storage.RedissPrefix, 1)
+		}
+		opt, err := redis.ParseClusterURL(newURL)
+		if err != nil {
+			return nil, err
+		}
+		opt.Protocol = 2
+		database := new(Redis)
+		database.client = redis.NewClusterClient(opt)
 		database.TablePrefix = storage.TablePrefix(tablePrefix)
 		if err = redisotel.InstrumentTracing(database.client, redisotel.WithAttributes(semconv.DBSystemRedis)); err != nil {
 			log.Logger().Error("failed to add tracing for redis", zap.Error(err))
@@ -350,6 +356,7 @@ func Open(path, tablePrefix string) (Database, error) {
 		return database, nil
 	} else if strings.HasPrefix(path, storage.MySQLPrefix) {
 		name := path[len(storage.MySQLPrefix):]
+		option := storage.NewOptions(opts...)
 		// probe isolation variable name
 		isolationVarName, err := storage.ProbeMySQLIsolationVariableName(name)
 		if err != nil {
@@ -357,7 +364,7 @@ func Open(path, tablePrefix string) (Database, error) {
 		}
 		// append parameters
 		if name, err = storage.AppendMySQLParams(name, map[string]string{
-			isolationVarName: "'READ-UNCOMMITTED'",
+			isolationVarName: fmt.Sprintf("'%s'", option.IsolationLevel),
 			"parseTime":      "true",
 		}); err != nil {
 			return nil, errors.Trace(err)

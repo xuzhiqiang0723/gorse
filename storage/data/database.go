@@ -17,6 +17,7 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"reflect"
 	"sort"
@@ -182,9 +183,12 @@ func (sorter feedbackSorter) Swap(i, j int) {
 type ScanOptions struct {
 	BeginUserId   *string
 	EndUserId     *string
+	BeginItemId   *string
+	EndItemId     *string
 	BeginTime     *time.Time
 	EndTime       *time.Time
 	FeedbackTypes []string
+	OrderByItemId bool
 }
 
 type ScanOption func(options *ScanOptions)
@@ -200,6 +204,20 @@ func WithBeginUserId(userId string) ScanOption {
 func WithEndUserId(userId string) ScanOption {
 	return func(options *ScanOptions) {
 		options.EndUserId = &userId
+	}
+}
+
+// WithBeginItemId sets the beginning item id. The beginning item id is included in the result.
+func WithBeginItemId(itemId string) ScanOption {
+	return func(options *ScanOptions) {
+		options.BeginItemId = &itemId
+	}
+}
+
+// WithEndItemId sets the end item id. The end item id is included in the result.
+func WithEndItemId(itemId string) ScanOption {
+	return func(options *ScanOptions) {
+		options.EndItemId = &itemId
 	}
 }
 
@@ -221,6 +239,13 @@ func WithEndTime(t time.Time) ScanOption {
 func WithFeedbackTypes(feedbackTypes ...string) ScanOption {
 	return func(options *ScanOptions) {
 		options.FeedbackTypes = feedbackTypes
+	}
+}
+
+// WithOrderByItemId sets the order by item id.
+func WithOrderByItemId() ScanOption {
+	return func(options *ScanOptions) {
+		options.OrderByItemId = true
 	}
 }
 
@@ -260,13 +285,17 @@ type Database interface {
 	GetUserStream(ctx context.Context, batchSize int) (chan []User, chan error)
 	GetItemStream(ctx context.Context, batchSize int, timeLimit *time.Time) (chan []Item, chan error)
 	GetFeedbackStream(ctx context.Context, batchSize int, options ...ScanOption) (chan []Feedback, chan error)
+	CountUsers(ctx context.Context) (int, error)
+	CountItems(ctx context.Context) (int, error)
+	CountFeedback(ctx context.Context) (int, error)
 }
 
 // Open a connection to a database.
-func Open(path, tablePrefix string) (Database, error) {
+func Open(path, tablePrefix string, opts ...storage.Option) (Database, error) {
 	var err error
 	if strings.HasPrefix(path, storage.MySQLPrefix) {
 		name := path[len(storage.MySQLPrefix):]
+		option := storage.NewOptions(opts...)
 		// probe isolation variable name
 		isolationVarName, err := storage.ProbeMySQLIsolationVariableName(name)
 		if err != nil {
@@ -275,7 +304,7 @@ func Open(path, tablePrefix string) (Database, error) {
 		// append parameters
 		if name, err = storage.AppendMySQLParams(name, map[string]string{
 			"sql_mode":       "'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'",
-			isolationVarName: "'READ-UNCOMMITTED'",
+			isolationVarName: fmt.Sprintf("'%s'", option.IsolationLevel),
 			"parseTime":      "true",
 		}); err != nil {
 			return nil, errors.Trace(err)

@@ -804,7 +804,7 @@ func BenchmarkGetRecommendCache(b *testing.B) {
 				documents[i].Categories = []string{""}
 			}
 			lo.Reverse(documents)
-			err := s.CacheClient.AddScores(ctx, cache.PopularItems, "", documents)
+			err := s.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Popular, documents)
 			require.NoError(b, err)
 			s.Config.Recommend.CacheSize = len(documents)
 
@@ -903,7 +903,7 @@ func BenchmarkRecommendFromLatest(b *testing.B) {
 			}
 			lo.Reverse(documents)
 			lo.Reverse(expects)
-			err := s.CacheClient.AddScores(ctx, cache.LatestItems, "", documents)
+			err := s.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Latest, documents)
 			require.NoError(b, err)
 			err = s.DataClient.BatchInsertFeedback(ctx, feedbacks, true, true, true)
 			require.NoError(b, err)
@@ -958,7 +958,7 @@ func BenchmarkRecommendFromItemBased(b *testing.B) {
 
 			// insert user neighbors
 			for i := 0; i < s.Config.Recommend.Online.NumFeedbackFallbackItemBased; i++ {
-				err := s.CacheClient.AddScores(ctx, cache.ItemNeighbors, fmt.Sprintf("init_item_%d", i), documents)
+				err := s.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, fmt.Sprintf("init_item_%d", i)), documents)
 				require.NoError(b, err)
 			}
 

@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 syntax = "proto3";
 
 option go_package = "github.com/zhenghaoz/gorse/protocol";
@@ -19,10 +20,17 @@ package protocol;
 
 import "google/protobuf/timestamp.proto";
 
+message Tensor {
+  repeated string key = 1;
+  repeated int32 shape = 2;
+  repeated float data = 3;
+}
+
 message User {
   string user_id = 1;
   bytes labels = 2;
   string comment = 3;
+  repeated string subscribe = 4;
 }
 
 message Item {
@@ -45,9 +53,9 @@ message Feedback {
 }
 
 enum NodeType {
-  ServerNode = 0;
-  WorkerNode = 1;
-  ClientNode = 2;
+  Server = 0;
+  Worker = 1;
+  Client = 2;
 }
 
 service Master {
@@ -60,7 +68,6 @@ service Master {
   rpc GetClickModel(VersionInfo) returns (stream Fragment) {}
 
   rpc PushProgress(PushProgressRequest) returns (PushProgressResponse) {}
-
 }
 
 message Meta {
@@ -82,9 +89,9 @@ message VersionInfo {
 
 message NodeInfo {
   NodeType node_type = 1;
-  string node_name = 2;
-  int64 http_port = 3;
+  string uuid = 2;
   string binary_version = 4;
+  string hostname = 5;
 }
 
 message Progress {
@@ -103,3 +110,37 @@ message PushProgressRequest {
 }
 
 message PushProgressResponse {}
+
+message PingRequest {}
+
+message PingResponse {}
+
+message UploadBlobRequest {
+  string name = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  bytes data = 3;
+}
+
+message UploadBlobResponse {}
+
+message FetchBlobRequest {
+  string name = 1;
+}
+
+message FetchBlobResponse {
+  google.protobuf.Timestamp timestamp = 1;
+}
+
+message DownloadBlobRequest {
+  string name = 1;
+}
+
+message DownloadBlobResponse {
+  bytes data = 1;
+}
+
+service BlobStore {
+  rpc UploadBlob(stream UploadBlobRequest) returns (UploadBlobResponse) {}
+  rpc FetchBlob(FetchBlobRequest) returns (FetchBlobResponse) {}
+  rpc DownloadBlob(DownloadBlobRequest) returns (stream DownloadBlobResponse) {}
+}

@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/expr-lang/expr/parser"
 	"github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
 	"github.com/go-playground/validator/v10"
@@ -60,32 +62,41 @@ type Config struct {
 	Recommend    RecommendConfig    `mapstructure:"recommend"`
 	Tracing      TracingConfig      `mapstructure:"tracing"`
 	Experimental ExperimentalConfig `mapstructure:"experimental"`
+	OIDC         OIDCConfig         `mapstructure:"oidc"`
 }
 
 // DatabaseConfig is the configuration for the database.
 type DatabaseConfig struct {
-	DataStore        string `mapstructure:"data_store" validate:"required,data_store"`   // database for data store
-	CacheStore       string `mapstructure:"cache_store" validate:"required,cache_store"` // database for cache store
-	TablePrefix      string `mapstructure:"table_prefix"`
-	DataTablePrefix  string `mapstructure:"data_table_prefix"`
-	CacheTablePrefix string `mapstructure:"cache_table_prefix"`
+	DataStore        string      `mapstructure:"data_store" validate:"required,data_store"`   // database for data store
+	CacheStore       string      `mapstructure:"cache_store" validate:"required,cache_store"` // database for cache store
+	TablePrefix      string      `mapstructure:"table_prefix"`
+	DataTablePrefix  string      `mapstructure:"data_table_prefix"`
+	CacheTablePrefix string      `mapstructure:"cache_table_prefix"`
+	MySQL            MySQLConfig `mapstructure:"mysql"`
+}
+
+type MySQLConfig struct {
+	IsolationLevel string `mapstructure:"isolation_level" validate:"oneof=READ-UNCOMMITTED READ-COMMITTED REPEATABLE-READ SERIALIZABLE"`
 }
 
 // MasterConfig is the configuration for the master.
 type MasterConfig struct {
-	Port                int           `mapstructure:"port" validate:"gte=0"`        // master port
-	Host                string        `mapstructure:"host"`                         // master host
-	HttpPort            int           `mapstructure:"http_port" validate:"gte=0"`   // HTTP port
-	HttpHost            string        `mapstructure:"http_host"`                    // HTTP host
-	HttpCorsDomains     []string      `mapstructure:"http_cors_domains"`            // add allowed cors domains
-	HttpCorsMethods     []string      `mapstructure:"http_cors_methods"`            // add allowed cors methods
-	NumJobs             int           `mapstructure:"n_jobs" validate:"gt=0"`       // number of working jobs
-	MetaTimeout         time.Duration `mapstructure:"meta_timeout" validate:"gt=0"` // cluster meta timeout (second)
-	DashboardUserName   string        `mapstructure:"dashboard_user_name"`          // dashboard user name
-	DashboardPassword   string        `mapstructure:"dashboard_password"`           // dashboard password
-	DashboardAuthServer string        `mapstructure:"dashboard_auth_server"`        // dashboard auth server
-	DashboardRedacted   bool          `mapstructure:"dashboard_redacted"`
-	AdminAPIKey         string        `mapstructure:"admin_api_key"`
+	Port              int           `mapstructure:"port" validate:"gte=0"`        // master port
+	Host              string        `mapstructure:"host"`                         // master host
+	SSLMode           bool          `mapstructure:"ssl_mode"`                     // enable SSL mode
+	SSLCA             string        `mapstructure:"ssl_ca"`                       // SSL CA file
+	SSLCert           string        `mapstructure:"ssl_cert"`                     // SSL certificate file
+	SSLKey            string        `mapstructure:"ssl_key"`                      // SSL key file
+	HttpPort          int           `mapstructure:"http_port" validate:"gte=0"`   // HTTP port
+	HttpHost          string        `mapstructure:"http_host"`                    // HTTP host
+	HttpCorsDomains   []string      `mapstructure:"http_cors_domains"`            // add allowed cors domains
+	HttpCorsMethods   []string      `mapstructure:"http_cors_methods"`            // add allowed cors methods
+	NumJobs           int           `mapstructure:"n_jobs" validate:"gt=0"`       // number of working jobs
+	MetaTimeout       time.Duration `mapstructure:"meta_timeout" validate:"gt=0"` // cluster meta timeout (second)
+	DashboardUserName string        `mapstructure:"dashboard_user_name"`          // dashboard user name
+	DashboardPassword string        `mapstructure:"dashboard_password"`           // dashboard password
+	DashboardRedacted bool          `mapstructure:"dashboard_redacted"`
+	AdminAPIKey       string        `mapstructure:"admin_api_key"`
 }
 
 // ServerConfig is the configuration for the server.
@@ -100,17 +111,19 @@ type ServerConfig struct {
 
 // RecommendConfig is the configuration of recommendation setup.
 type RecommendConfig struct {
-	CacheSize     int                 `mapstructure:"cache_size" validate:"gt=0"`
-	CacheExpire   time.Duration       `mapstructure:"cache_expire" validate:"gt=0"`
-	ActiveUserTTL int                 `mapstructure:"active_user_ttl" validate:"gte=0"`
-	DataSource    DataSourceConfig    `mapstructure:"data_source"`
-	Popular       PopularConfig       `mapstructure:"popular"`
-	UserNeighbors NeighborsConfig     `mapstructure:"user_neighbors"`
-	ItemNeighbors NeighborsConfig     `mapstructure:"item_neighbors"`
-	Collaborative CollaborativeConfig `mapstructure:"collaborative"`
-	Replacement   ReplacementConfig   `mapstructure:"replacement"`
-	Offline       OfflineConfig       `mapstructure:"offline"`
-	Online        OnlineConfig        `mapstructure:"online"`
+	CacheSize       int                     `mapstructure:"cache_size" validate:"gt=0"`
+	CacheExpire     time.Duration           `mapstructure:"cache_expire" validate:"gt=0"`
+	ActiveUserTTL   int                     `mapstructure:"active_user_ttl" validate:"gte=0"`
+	DataSource      DataSourceConfig        `mapstructure:"data_source"`
+	NonPersonalized []NonPersonalizedConfig `mapstructure:"non-personalized" validate:"dive"`
+	Popular         PopularConfig           `mapstructure:"popular"`
+	ItemToItem      []ItemToItemConfig      `mapstructure:"item-to-item" validate:"dive"`
+	UserNeighbors   NeighborsConfig         `mapstructure:"user_neighbors"`
+	ItemNeighbors   NeighborsConfig         `mapstructure:"item_neighbors"`
+	Collaborative   CollaborativeConfig     `mapstructure:"collaborative"`
+	Replacement     ReplacementConfig       `mapstructure:"replacement"`
+	Offline         OfflineConfig           `mapstructure:"offline"`
+	Online          OnlineConfig            `mapstructure:"online"`
 }
 
 type DataSourceConfig struct {
@@ -120,15 +133,32 @@ type DataSourceConfig struct {
 	ItemTTL               uint     `mapstructure:"item_ttl" validate:"gte=0"`              // item-to-live of items
 }
 
+type NonPersonalizedConfig struct {
+	Name   string `mapstructure:"name" json:"name"`
+	Score  string `mapstructure:"score" json:"score" validate:"required,item_expr"`
+	Filter string `mapstructure:"filter" json:"filter" validate:"item_expr"`
+}
+
 type PopularConfig struct {
 	PopularWindow time.Duration `mapstructure:"popular_window" validate:"gte=0"`
 }
 
 type NeighborsConfig struct {
-	NeighborType  string  `mapstructure:"neighbor_type" validate:"oneof=auto similar related ''"`
-	EnableIndex   bool    `mapstructure:"enable_index"`
-	IndexRecall   float32 `mapstructure:"index_recall" validate:"gt=0"`
-	IndexFitEpoch int     `mapstructure:"index_fit_epoch" validate:"gt=0"`
+	NeighborType string `mapstructure:"neighbor_type" validate:"oneof=auto similar related ''"`
+}
+
+type ItemToItemConfig struct {
+	Name   string `mapstructure:"name" json:"name"`
+	Type   string `mapstructure:"type" json:"type" validate:"oneof=embedding tags users"`
+	Column string `mapstructure:"column" json:"column" validate:"item_expr"`
+}
+
+func (config *ItemToItemConfig) Hash() string {
+	hash := md5.New()
+	hash.Write([]byte(config.Name))
+	hash.Write([]byte(config.Type))
+	hash.Write([]byte(config.Column))
+	return string(hash.Sum(nil))
 }
 
 type CollaborativeConfig struct {
@@ -137,9 +167,6 @@ type CollaborativeConfig struct {
 	ModelSearchEpoch      int           `mapstructure:"model_search_epoch" validate:"gt=0"`
 	ModelSearchTrials     int           `mapstructure:"model_search_trials" validate:"gt=0"`
 	EnableModelSizeSearch bool          `mapstructure:"enable_model_size_search"`
-	EnableIndex           bool          `mapstructure:"enable_index"`
-	IndexRecall           float32       `mapstructure:"index_recall" validate:"gt=0"`
-	IndexFitEpoch         int           `mapstructure:"index_fit_epoch" validate:"gt=0"`
 }
 
 type ReplacementConfig struct {
@@ -179,8 +206,21 @@ type ExperimentalConfig struct {
 	DeepLearningBatchSize int  `mapstructure:"deep_learning_batch_size"`
 }
 
+type OIDCConfig struct {
+	Enable       bool   `mapstructure:"enable"`
+	Issuer       string `mapstructure:"issuer"`
+	ClientID     string `mapstructure:"client_id"`
+	ClientSecret string `mapstructure:"client_secret"`
+	RedirectURL  string `mapstructure:"redirect_url" validate:"omitempty,endswith=/callback/oauth2"`
+}
+
 func GetDefaultConfig() *Config {
 	return &Config{
+		Database: DatabaseConfig{
+			MySQL: MySQLConfig{
+				IsolationLevel: "READ-UNCOMMITTED",
+			},
+		},
 		Master: MasterConfig{
 			Port:            8086,
 			Host:            "0.0.0.0",
@@ -205,25 +245,16 @@ func GetDefaultConfig() *Config {
 				PopularWindow: 180 * 24 * time.Hour,
 			},
 			UserNeighbors: NeighborsConfig{
-				NeighborType:  "auto",
-				EnableIndex:   true,
-				IndexRecall:   0.8,
-				IndexFitEpoch: 3,
+				NeighborType: "auto",
 			},
 			ItemNeighbors: NeighborsConfig{
-				NeighborType:  "auto",
-				EnableIndex:   true,
-				IndexRecall:   0.8,
-				IndexFitEpoch: 3,
+				NeighborType: "auto",
 			},
 			Collaborative: CollaborativeConfig{
 				ModelFitPeriod:    60 * time.Minute,
 				ModelSearchPeriod: 180 * time.Minute,
 				ModelSearchEpoch:  100,
 				ModelSearchTrials: 10,
-				EnableIndex:       true,
-				IndexRecall:       0.9,
-				IndexFitEpoch:     3,
 			},
 			Replacement: ReplacementConfig{
 				EnableReplacement:        false,
@@ -260,43 +291,25 @@ func (config *Config) Now() *time.Time {
 }
 
 func (config *Config) UserNeighborDigest() string {
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("%v-%v", config.Recommend.UserNeighbors.NeighborType, config.Recommend.UserNeighbors.EnableIndex))
-	// feedback option
+	hash := md5.New()
+	hash.Write([]byte(config.Recommend.UserNeighbors.NeighborType))
 	if lo.Contains([]string{"auto", "related"}, config.Recommend.UserNeighbors.NeighborType) {
-		builder.WriteString(fmt.Sprintf("-%s", strings.Join(config.Recommend.DataSource.PositiveFeedbackTypes, "-")))
+		hash.Write([]byte(fmt.Sprintf("-%s", strings.Join(config.Recommend.DataSource.PositiveFeedbackTypes, "-"))))
 	} else {
-		builder.WriteString("-")
+		hash.Write([]byte("-"))
 	}
-	// index option
-	if config.Recommend.UserNeighbors.EnableIndex {
-		builder.WriteString(fmt.Sprintf("-%v-%v", config.Recommend.UserNeighbors.IndexRecall, config.Recommend.UserNeighbors.IndexFitEpoch))
-	} else {
-		builder.WriteString("--")
-	}
-
-	digest := md5.Sum([]byte(builder.String()))
-	return hex.EncodeToString(digest[:])
+	return string(hash.Sum(nil))
 }
 
 func (config *Config) ItemNeighborDigest() string {
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("%v-%v", config.Recommend.ItemNeighbors.NeighborType, config.Recommend.ItemNeighbors.EnableIndex))
-	// feedback option
+	hash := md5.New()
+	hash.Write([]byte(config.Recommend.ItemNeighbors.NeighborType))
 	if lo.Contains([]string{"auto", "related"}, config.Recommend.ItemNeighbors.NeighborType) {
-		builder.WriteString(fmt.Sprintf("-%s", strings.Join(config.Recommend.DataSource.PositiveFeedbackTypes, "-")))
+		hash.Write([]byte(fmt.Sprintf("-%s", strings.Join(config.Recommend.DataSource.PositiveFeedbackTypes, "-"))))
 	} else {
-		builder.WriteString("-")
+		hash.Write([]byte("-"))
 	}
-	// index option
-	if config.Recommend.ItemNeighbors.EnableIndex {
-		builder.WriteString(fmt.Sprintf("-%v-%v", config.Recommend.ItemNeighbors.IndexRecall, config.Recommend.ItemNeighbors.IndexFitEpoch))
-	} else {
-		builder.WriteString("--")
-	}
-
-	digest := md5.Sum([]byte(builder.String()))
-	return hex.EncodeToString(digest[:])
+	return string(hash.Sum(nil))
 }
 
 type digestOptions struct {
@@ -364,13 +377,6 @@ func (config *Config) OfflineRecommendDigest(option ...DigestOption) string {
 	}
 	if config.Recommend.Offline.EnableItemBasedRecommend {
 		builder.WriteString(fmt.Sprintf("-%v", options.itemNeighborDigest))
-	}
-	if options.enableCollaborative {
-		builder.WriteString(fmt.Sprintf("-%v", config.Recommend.Collaborative.EnableIndex))
-		if config.Recommend.Collaborative.EnableIndex {
-			builder.WriteString(fmt.Sprintf("-%v-%v",
-				config.Recommend.Collaborative.IndexRecall, config.Recommend.Collaborative.IndexFitEpoch))
-		}
 	}
 	if config.Recommend.Replacement.EnableReplacement {
 		builder.WriteString(fmt.Sprintf("-%v-%v",
@@ -468,6 +474,8 @@ func (config *TracingConfig) Equal(other TracingConfig) bool {
 
 func setDefault() {
 	defaultConfig := GetDefaultConfig()
+	// [database.mysql]
+	viper.SetDefault("database.mysql.isolation_level", defaultConfig.Database.MySQL.IsolationLevel)
 	// [master]
 	viper.SetDefault("master.port", defaultConfig.Master.Port)
 	viper.SetDefault("master.host", defaultConfig.Master.Host)
@@ -491,22 +499,13 @@ func setDefault() {
 	viper.SetDefault("recommend.popular.popular_window", defaultConfig.Recommend.Popular.PopularWindow)
 	// [recommend.user_neighbors]
 	viper.SetDefault("recommend.user_neighbors.neighbor_type", defaultConfig.Recommend.UserNeighbors.NeighborType)
-	viper.SetDefault("recommend.user_neighbors.enable_index", defaultConfig.Recommend.UserNeighbors.EnableIndex)
-	viper.SetDefault("recommend.user_neighbors.index_recall", defaultConfig.Recommend.UserNeighbors.IndexRecall)
-	viper.SetDefault("recommend.user_neighbors.index_fit_epoch", defaultConfig.Recommend.UserNeighbors.IndexFitEpoch)
 	// [recommend.item_neighbors]
 	viper.SetDefault("recommend.item_neighbors.neighbor_type", defaultConfig.Recommend.ItemNeighbors.NeighborType)
-	viper.SetDefault("recommend.item_neighbors.enable_index", defaultConfig.Recommend.ItemNeighbors.EnableIndex)
-	viper.SetDefault("recommend.item_neighbors.index_recall", defaultConfig.Recommend.ItemNeighbors.IndexRecall)
-	viper.SetDefault("recommend.item_neighbors.index_fit_epoch", defaultConfig.Recommend.ItemNeighbors.IndexFitEpoch)
 	// [recommend.collaborative]
 	viper.SetDefault("recommend.collaborative.model_fit_period", defaultConfig.Recommend.Collaborative.ModelFitPeriod)
 	viper.SetDefault("recommend.collaborative.model_search_period", defaultConfig.Recommend.Collaborative.ModelSearchPeriod)
 	viper.SetDefault("recommend.collaborative.model_search_epoch", defaultConfig.Recommend.Collaborative.ModelSearchEpoch)
 	viper.SetDefault("recommend.collaborative.model_search_trials", defaultConfig.Recommend.Collaborative.ModelSearchTrials)
-	viper.SetDefault("recommend.collaborative.enable_index", defaultConfig.Recommend.Collaborative.EnableIndex)
-	viper.SetDefault("recommend.collaborative.index_recall", defaultConfig.Recommend.Collaborative.IndexRecall)
-	viper.SetDefault("recommend.collaborative.index_fit_epoch", defaultConfig.Recommend.Collaborative.IndexFitEpoch)
 	// [recommend.replacement]
 	viper.SetDefault("recommend.replacement.enable_replacement", defaultConfig.Recommend.Replacement.EnableReplacement)
 	viper.SetDefault("recommend.replacement.positive_replacement_decay", defaultConfig.Recommend.Replacement.PositiveReplacementDecay)
@@ -549,6 +548,10 @@ func LoadConfig(path string, oneModel bool) (*Config, error) {
 		{"database.data_table_prefix", "GORSE_DATA_TABLE_PREFIX"},
 		{"master.port", "GORSE_MASTER_PORT"},
 		{"master.host", "GORSE_MASTER_HOST"},
+		{"master.ssl_mode", "GORSE_MASTER_SSL_MODE"},
+		{"master.ssl_ca", "GORSE_MASTER_SSL_CA"},
+		{"master.ssl_cert", "GORSE_MASTER_SSL_CERT"},
+		{"master.ssl_key", "GORSE_MASTER_SSL_KEY"},
 		{"master.http_port", "GORSE_MASTER_HTTP_PORT"},
 		{"master.http_host", "GORSE_MASTER_HTTP_HOST"},
 		{"master.n_jobs", "GORSE_MASTER_JOBS"},
@@ -558,6 +561,11 @@ func LoadConfig(path string, oneModel bool) (*Config, error) {
 		{"master.dashboard_redacted", "GORSE_DASHBOARD_REDACTED"},
 		{"master.admin_api_key", "GORSE_ADMIN_API_KEY"},
 		{"server.api_key", "GORSE_SERVER_API_KEY"},
+		{"oidc.enable", "GORSE_OIDC_ENABLE"},
+		{"oidc.issuer", "GORSE_OIDC_ISSUER"},
+		{"oidc.client_id", "GORSE_OIDC_CLIENT_ID"},
+		{"oidc.client_secret", "GORSE_OIDC_CLIENT_SECRET"},
+		{"oidc.redirect_url", "GORSE_OIDC_REDIRECT_URL"},
 	}
 	for _, binding := range bindings {
 		err := viper.BindEnv(binding.key, binding.env)
@@ -584,7 +592,7 @@ func LoadConfig(path string, oneModel bool) (*Config, error) {
 	}
 
 	// validate config file
-	if err := conf.Validate(oneModel); err != nil {
+	if err := conf.Validate(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -598,7 +606,25 @@ func LoadConfig(path string, oneModel bool) (*Config, error) {
 	return &conf, nil
 }
 
-func (config *Config) Validate(oneModel bool) error {
+func (config *Config) Validate() error {
+	// Check non-personalized recommenders
+	nonPersonalizedNames := mapset.NewSet[string]()
+	for _, nonPersonalized := range config.Recommend.NonPersonalized {
+		if nonPersonalizedNames.Contains(nonPersonalized.Name) {
+			return errors.Errorf("non-personalized recommender %v is duplicated", nonPersonalized.Name)
+		}
+		nonPersonalizedNames.Add(nonPersonalized.Name)
+	}
+
+	// Check item-to-item recommenders
+	itemToItemNames := mapset.NewSet[string]()
+	for _, itemToItem := range config.Recommend.ItemToItem {
+		if itemToItemNames.Contains(itemToItem.Name) {
+			return errors.Errorf("item-to-item recommender %v is duplicated", itemToItem.Name)
+		}
+		itemToItemNames.Add(itemToItem.Name)
+	}
+
 	validate := validator.New()
 	if err := validate.RegisterValidation("data_store", func(fl validator.FieldLevel) bool {
 		prefixes := []string{
@@ -632,9 +658,7 @@ func (config *Config) Validate(oneModel bool) error {
 			storage.MySQLPrefix,
 			storage.PostgresPrefix,
 			storage.PostgreSQLPrefix,
-		}
-		if oneModel {
-			prefixes = append(prefixes, storage.SQLitePrefix)
+			storage.SQLitePrefix,
 		}
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(fl.Field().String(), prefix) {
@@ -642,6 +666,16 @@ func (config *Config) Validate(oneModel bool) error {
 			}
 		}
 		return false
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	if err := validate.RegisterValidation("item_expr", func(fl validator.FieldLevel) bool {
+		if fl.Field().String() == "" {
+			// Empty expression is legal.
+			return true
+		}
+		_, err := parser.Parse(fl.Field().String())
+		return err == nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
@@ -667,6 +701,14 @@ func (config *Config) Validate(oneModel bool) error {
 			return ut.Add("cache_store", "unsupported cache storage backend", true) // see universal-translator for details
 		}, func(ut ut.Translator, fe validator.FieldError) string {
 			t, _ := ut.T("cache_store", fe.Field())
+			return t
+		}); err != nil {
+			return errors.Trace(err)
+		}
+		if err := validate.RegisterTranslation("item_expr", trans, func(ut ut.Translator) error {
+			return ut.Add("item_expr", "invalid item expression", true)
+		}, func(ut ut.Translator, fe validator.FieldError) string {
+			t, _ := ut.T("item_expr", fe.Field())
 			return t
 		}); err != nil {
 			return errors.Trace(err)

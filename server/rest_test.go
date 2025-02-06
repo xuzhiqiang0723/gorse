@@ -243,7 +243,7 @@ func (suite *ServerTestSuite) TestItems() {
 		},
 	}
 	// insert popular scores
-	err := suite.CacheClient.AddScores(ctx, cache.PopularItems, "", []cache.Score{
+	err := suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Popular, []cache.Score{
 		{Id: "0", Score: 10},
 		{Id: "2", Score: 12},
 		{Id: "4", Score: 14},
@@ -820,12 +820,16 @@ func (suite *ServerTestSuite) TestNonPersonalizedRecommend() {
 	operators := []ListOperator{
 		// TODO: Support hide users in the future.
 		//{"User Neighbors", cache.Collection(cache.UserNeighbors, "0"), "/api/user/0/neighbors"},
-		{"Item Neighbors", cache.ItemNeighbors, "0", "", "/api/item/0/neighbors"},
-		{"Item Neighbors in Category", cache.ItemNeighbors, "0", "0", "/api/item/0/neighbors/0"},
-		{"Latest Items", cache.LatestItems, "", "", "/api/latest/"},
-		{"Latest Items in Category", cache.LatestItems, "", "0", "/api/latest/0"},
-		{"Popular Items", cache.PopularItems, "", "", "/api/popular/"},
-		{"Popular Items in Category", cache.PopularItems, "", "0", "/api/popular/0"},
+		{"Item Neighbors", cache.ItemToItem, cache.Key(cache.Neighbors, "0"), "", "/api/item/0/neighbors"},
+		{"Item Neighbors in Category", cache.ItemToItem, cache.Key(cache.Neighbors, "0"), "0", "/api/item/0/neighbors/0"},
+		{"LatestItems", cache.NonPersonalized, cache.Latest, "", "/api/latest/"},
+		{"LatestItemsCategory", cache.NonPersonalized, cache.Latest, "0", "/api/latest/0"},
+		{"PopularItems", cache.NonPersonalized, cache.Popular, "", "/api/popular/"},
+		{"PopularItemsCategory", cache.NonPersonalized, cache.Popular, "0", "/api/popular/0"},
+		{"NonPersonalized", cache.NonPersonalized, "trending", "", "/api/non-personalized/trending"},
+		{"NonPersonalizedCategory", cache.NonPersonalized, "trending", "0", "/api/non-personalized/trending"},
+		{"ItemToItem", cache.ItemToItem, cache.Key("lookalike", "0"), "", "/api/item-to-item/lookalike/0"},
+		{"ItemToItemCategory", cache.ItemToItem, cache.Key("lookalike", "0"), "0", "/api/item-to-item/lookalike/0"},
 		{"Offline Recommend", cache.OfflineRecommend, "0", "", "/api/intermediate/recommend/0"},
 		{"Offline Recommend in Category", cache.OfflineRecommend, "0", "0", "/api/intermediate/recommend/0/0"},
 	}
@@ -865,47 +869,52 @@ func (suite *ServerTestSuite) TestNonPersonalizedRecommend() {
 			apitest.New().
 				Handler(suite.handler).
 				Get(operator.URL).
+				Query("category", operator.Category).
 				Header("X-API-Key", apiKey).
 				Expect(t).
 				Status(http.StatusOK).
-				Body(suite.marshal(([]cache.Score{documents[0], documents[1], documents[2], documents[4]}))).
+				Body(suite.marshal([]cache.Score{documents[0], documents[1], documents[2], documents[4]})).
 				End()
 			apitest.New().
 				Handler(suite.handler).
 				Get(operator.URL).
+				Query("category", operator.Category).
 				Header("X-API-Key", apiKey).
 				QueryParams(map[string]string{
 					"offset": "0",
 					"n":      "3"}).
 				Expect(t).
 				Status(http.StatusOK).
-				Body(suite.marshal(([]cache.Score{documents[0], documents[1], documents[2]}))).
+				Body(suite.marshal([]cache.Score{documents[0], documents[1], documents[2]})).
 				End()
 			apitest.New().
 				Handler(suite.handler).
 				Get(operator.URL).
+				Query("category", operator.Category).
 				Header("X-API-Key", apiKey).
 				QueryParams(map[string]string{
 					"offset": "1",
 					"n":      "3"}).
 				Expect(t).
 				Status(http.StatusOK).
-				Body(suite.marshal(([]cache.Score{documents[1], documents[2], documents[4]}))).
+				Body(suite.marshal([]cache.Score{documents[1], documents[2], documents[4]})).
 				End()
 			apitest.New().
 				Handler(suite.handler).
 				Get(operator.URL).
+				Query("category", operator.Category).
 				Header("X-API-Key", apiKey).
 				QueryParams(map[string]string{
 					"offset": "0",
 					"n":      "0"}).
 				Expect(t).
 				Status(http.StatusOK).
-				Body(suite.marshal(([]cache.Score{documents[0], documents[1], documents[2], documents[4]}))).
+				Body(suite.marshal([]cache.Score{documents[0], documents[1], documents[2], documents[4]})).
 				End()
 			apitest.New().
 				Handler(suite.handler).
 				Get(operator.URL).
+				Query("category", operator.Category).
 				Header("X-API-Key", apiKey).
 				QueryParams(map[string]string{
 					"user-id": "0",
@@ -913,7 +922,7 @@ func (suite *ServerTestSuite) TestNonPersonalizedRecommend() {
 					"n":       "0"}).
 				Expect(t).
 				Status(http.StatusOK).
-				Body(suite.marshal(([]cache.Score{documents[0], documents[2], documents[4]}))).
+				Body(suite.marshal([]cache.Score{documents[0], documents[2], documents[4]})).
 				End()
 		})
 	}
@@ -1161,8 +1170,8 @@ func (suite *ServerTestSuite) TestGetRecommendsWithMultiCategories() {
 		Get("/api/recommend/0").
 		Header("X-API-Key", apiKey).
 		QueryCollection(map[string][]string{
-			"n":        []string{"3"},
-			"category": []string{"2", "3"},
+			"n":        {"3"},
+			"category": {"2", "3"},
 		}).
 		Expect(t).
 		Status(http.StatusOK).
@@ -1255,25 +1264,25 @@ func (suite *ServerTestSuite) TestServerGetRecommendsFallbackItemBasedSimilar() 
 		End()
 
 	// insert similar items
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "1", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "1"), []cache.Score{
 		{Id: "2", Score: 100000, Categories: []string{""}},
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "2", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "2"), []cache.Score{
 		{Id: "3", Score: 100000, Categories: []string{"", "*"}},
 		{Id: "8", Score: 1, Categories: []string{""}},
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "3", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "3"), []cache.Score{
 		{Id: "4", Score: 100000, Categories: []string{""}},
 		{Id: "7", Score: 1, Categories: []string{"", "*"}},
 		{Id: "8", Score: 1, Categories: []string{""}},
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "4", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "4"), []cache.Score{
 		{Id: "1", Score: 100000, Categories: []string{"", "*"}},
 		{Id: "6", Score: 1, Categories: []string{""}},
 		{Id: "7", Score: 1, Categories: []string{"", "*"}},
@@ -1281,7 +1290,7 @@ func (suite *ServerTestSuite) TestServerGetRecommendsFallbackItemBasedSimilar() 
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "5", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "5"), []cache.Score{
 		{Id: "1", Score: 1, Categories: []string{""}},
 		{Id: "6", Score: 1, Categories: []string{""}},
 		{Id: "7", Score: 100000, Categories: []string{""}},
@@ -1341,7 +1350,7 @@ func (suite *ServerTestSuite) TestGetRecommendsFallbackUserBasedSimilar() {
 		Body(`{"RowAffected": 4}`).
 		End()
 	// insert similar users
-	err = suite.CacheClient.AddScores(ctx, cache.UserNeighbors, "0", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.UserToUser, cache.Key(cache.Neighbors, "0"), []cache.Score{
 		{Id: "1", Score: 2, Categories: []string{""}},
 		{Id: "2", Score: 1.5, Categories: []string{""}},
 		{Id: "3", Score: 1, Categories: []string{""}},
@@ -1410,26 +1419,26 @@ func (suite *ServerTestSuite) TestGetRecommendsFallbackPreCached() {
 		{Id: "104", Score: 96, Categories: []string{"*"}}})
 	assert.NoError(t, err)
 	// insert latest
-	err = suite.CacheClient.AddScores(ctx, cache.LatestItems, "", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Latest, []cache.Score{
 		{Id: "5", Score: 95, Categories: []string{""}},
 		{Id: "6", Score: 94, Categories: []string{""}},
 		{Id: "7", Score: 93, Categories: []string{""}},
 		{Id: "8", Score: 92, Categories: []string{""}}})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.LatestItems, "", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Latest, []cache.Score{
 		{Id: "105", Score: 95, Categories: []string{"*"}},
 		{Id: "106", Score: 94, Categories: []string{"*"}},
 		{Id: "107", Score: 93, Categories: []string{"*"}},
 		{Id: "108", Score: 92, Categories: []string{"*"}}})
 	assert.NoError(t, err)
 	// insert popular
-	err = suite.CacheClient.AddScores(ctx, cache.PopularItems, "", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Popular, []cache.Score{
 		{Id: "9", Score: 91, Categories: []string{""}},
 		{Id: "10", Score: 90, Categories: []string{""}},
 		{Id: "11", Score: 89, Categories: []string{""}},
 		{Id: "12", Score: 88, Categories: []string{""}}})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.PopularItems, "", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Popular, []cache.Score{
 		{Id: "109", Score: 91, Categories: []string{"*"}},
 		{Id: "110", Score: 90, Categories: []string{"*"}},
 		{Id: "111", Score: 89, Categories: []string{"*"}},
@@ -1541,26 +1550,26 @@ func (suite *ServerTestSuite) TestSessionRecommend() {
 	suite.Config.Recommend.DataSource.PositiveFeedbackTypes = []string{"a"}
 
 	// insert similar items
-	err := suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "1", []cache.Score{
+	err := suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "1"), []cache.Score{
 		{Id: "2", Score: 100000, Categories: []string{""}},
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 		{Id: "100", Score: 100000, Categories: []string{""}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "2", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "2"), []cache.Score{
 		{Id: "3", Score: 100000, Categories: []string{"", "*"}},
 		{Id: "8", Score: 1, Categories: []string{""}},
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "3", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "3"), []cache.Score{
 		{Id: "4", Score: 100000, Categories: []string{""}},
 		{Id: "7", Score: 1, Categories: []string{"", "*"}},
 		{Id: "8", Score: 1, Categories: []string{""}},
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "4", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "4"), []cache.Score{
 		{Id: "1", Score: 100000, Categories: []string{"", "*"}},
 		{Id: "6", Score: 1, Categories: []string{""}},
 		{Id: "7", Score: 1, Categories: []string{"", "*"}},
@@ -1568,7 +1577,7 @@ func (suite *ServerTestSuite) TestSessionRecommend() {
 		{Id: "9", Score: 1, Categories: []string{"", "*"}},
 	})
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "5", []cache.Score{
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "5"), []cache.Score{
 		{Id: "1", Score: 1, Categories: []string{""}},
 		{Id: "6", Score: 1, Categories: []string{""}},
 		{Id: "7", Score: 100000, Categories: []string{""}},
@@ -1669,11 +1678,11 @@ func (suite *ServerTestSuite) TestVisibility() {
 		})
 	}
 	lo.Reverse(documents)
-	err := suite.CacheClient.AddScores(ctx, cache.LatestItems, "", documents)
+	err := suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Latest, documents)
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.PopularItems, "", documents)
+	err = suite.CacheClient.AddScores(ctx, cache.NonPersonalized, cache.Popular, documents)
 	assert.NoError(t, err)
-	err = suite.CacheClient.AddScores(ctx, cache.ItemNeighbors, "100", documents)
+	err = suite.CacheClient.AddScores(ctx, cache.ItemToItem, cache.Key(cache.Neighbors, "100"), documents)
 	assert.NoError(t, err)
 	err = suite.CacheClient.AddScores(ctx, cache.OfflineRecommend, "100", documents)
 	assert.NoError(t, err)
@@ -1714,7 +1723,7 @@ func (suite *ServerTestSuite) TestVisibility() {
 		JSON(items).
 		Expect(t).
 		Status(http.StatusOK).
-		Body(suite.marshal((documents[:2]))).
+		Body(suite.marshal(documents[:2])).
 		End()
 	apitest.New().
 		Handler(suite.handler).
@@ -1723,7 +1732,7 @@ func (suite *ServerTestSuite) TestVisibility() {
 		JSON(items).
 		Expect(t).
 		Status(http.StatusOK).
-		Body(suite.marshal((documents[:2]))).
+		Body(suite.marshal(documents[:2])).
 		End()
 	apitest.New().
 		Handler(suite.handler).
@@ -1732,7 +1741,7 @@ func (suite *ServerTestSuite) TestVisibility() {
 		JSON(items).
 		Expect(t).
 		Status(http.StatusOK).
-		Body(suite.marshal((documents[:2]))).
+		Body(suite.marshal(documents[:2])).
 		End()
 	apitest.New().
 		Handler(suite.handler).

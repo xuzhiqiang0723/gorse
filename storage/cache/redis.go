@@ -88,7 +88,13 @@ func (r *Redis) Init() error {
 
 func (r *Redis) Scan(work func(string) error) error {
 	ctx := context.Background()
-	return r.scan(ctx, r.client, work)
+	if clusterClient, isCluster := r.client.(*redis.ClusterClient); isCluster {
+		return clusterClient.ForEachMaster(ctx, func(ctx context.Context, client *redis.Client) error {
+			return r.scan(ctx, client, work)
+		})
+	} else {
+		return r.scan(ctx, r.client, work)
+	}
 }
 
 func (r *Redis) scan(ctx context.Context, client redis.UniversalClient, work func(string) error) error {
@@ -115,10 +121,16 @@ func (r *Redis) scan(ctx context.Context, client redis.UniversalClient, work fun
 
 func (r *Redis) Purge() error {
 	ctx := context.Background()
-	return r.purge(ctx, r.client)
+	if clusterClient, isCluster := r.client.(*redis.ClusterClient); isCluster {
+		return clusterClient.ForEachMaster(ctx, func(ctx context.Context, client *redis.Client) error {
+			return r.purge(ctx, client, isCluster)
+		})
+	} else {
+		return r.purge(ctx, r.client, isCluster)
+	}
 }
 
-func (r *Redis) purge(ctx context.Context, client redis.UniversalClient) error {
+func (r *Redis) purge(ctx context.Context, client redis.UniversalClient, isCluster bool) error {
 	var (
 		result []string
 		cursor uint64
@@ -130,8 +142,20 @@ func (r *Redis) purge(ctx context.Context, client redis.UniversalClient) error {
 			return errors.Trace(err)
 		}
 		if len(result) > 0 {
-			if err = client.Del(ctx, result...).Err(); err != nil {
-				return errors.Trace(err)
+			if isCluster {
+				p := client.Pipeline()
+				for _, key := range result {
+					if err = p.Del(ctx, key).Err(); err != nil {
+						return errors.Trace(err)
+					}
+				}
+				if _, err = p.Exec(ctx); err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				if err = client.Del(ctx, result...).Err(); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		if cursor == 0 {
@@ -254,9 +278,6 @@ func (r *Redis) AddScores(ctx context.Context, collection, subset string, docume
 }
 
 func (r *Redis) SearchScores(ctx context.Context, collection, subset string, query []string, begin, end int) ([]Score, error) {
-	if len(query) == 0 {
-		return nil, nil
-	}
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("@collection:{ %s } @is_hidden:[0 0]", escape(collection)))
 	if subset != "" {
@@ -307,7 +328,7 @@ func (r *Redis) SearchScores(ctx context.Context, collection, subset string, que
 	return documents, nil
 }
 
-func (r *Redis) UpdateScores(ctx context.Context, collections []string, id string, patch ScorePatch) error {
+func (r *Redis) UpdateScores(ctx context.Context, collections []string, subset *string, id string, patch ScorePatch) error {
 	if len(collections) == 0 {
 		return nil
 	}
@@ -317,6 +338,9 @@ func (r *Redis) UpdateScores(ctx context.Context, collections []string, id strin
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("@collection:{ %s }", escape(strings.Join(collections, " | "))))
 	builder.WriteString(fmt.Sprintf(" @id:{ %s }", escape(id)))
+	if subset != nil {
+		builder.WriteString(fmt.Sprintf(" @subset:{ %s }", escape(*subset)))
+	}
 	for {
 		// search documents
 		result, err := r.client.FTSearchWithArgs(ctx, r.DocumentTable(), builder.String(), &redis.FTSearchOptions{

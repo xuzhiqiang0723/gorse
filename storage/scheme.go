@@ -29,17 +29,19 @@ import (
 )
 
 const (
-	MySQLPrefix      = "mysql://"
-	MongoPrefix      = "mongodb://"
-	MongoSrvPrefix   = "mongodb+srv://"
-	PostgresPrefix   = "postgres://"
-	PostgreSQLPrefix = "postgresql://"
-	ClickhousePrefix = "clickhouse://"
-	CHHTTPPrefix     = "chhttp://"
-	CHHTTPSPrefix    = "chhttps://"
-	SQLitePrefix     = "sqlite://"
-	RedisPrefix      = "redis://"
-	RedissPrefix     = "rediss://"
+	MySQLPrefix         = "mysql://"
+	MongoPrefix         = "mongodb://"
+	MongoSrvPrefix      = "mongodb+srv://"
+	PostgresPrefix      = "postgres://"
+	PostgreSQLPrefix    = "postgresql://"
+	ClickhousePrefix    = "clickhouse://"
+	CHHTTPPrefix        = "chhttp://"
+	CHHTTPSPrefix       = "chhttps://"
+	SQLitePrefix        = "sqlite://"
+	RedisPrefix         = "redis://"
+	RedissPrefix        = "rediss://"
+	RedisClusterPrefix  = "redis+cluster://"
+	RedissClusterPrefix = "rediss+cluster://"
 )
 
 func AppendURLParams(rawURL string, params []lo.Tuple2[string, string]) (string, error) {
@@ -77,7 +79,7 @@ func ProbeMySQLIsolationVariableName(dsn string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	defer connection.Close()
-	rows, err := connection.Query("SHOW VARIABLES LIKE '%isolation%'")
+	rows, err := connection.Query("SHOW VARIABLES WHERE variable_name = 'transaction_isolation' OR variable_name = 'tx_isolation'")
 	if err != nil {
 		return "", errors.Trace(err)
 	}

@@ -726,6 +726,19 @@ func (db *MongoDB) GetFeedbackStream(ctx context.Context, batchSize int, scanOpt
 			}
 			filter["feedbackkey.userid"] = userIdConditions
 		}
+		if scan.BeginItemId != nil || scan.EndItemId != nil {
+			itemIdConditions := bson.M{}
+			if scan.BeginItemId != nil {
+				itemIdConditions["$gte"] = *scan.BeginItemId
+			}
+			if scan.EndItemId != nil {
+				itemIdConditions["$lte"] = *scan.EndItemId
+			}
+			filter["feedbackkey.itemid"] = itemIdConditions
+		}
+		if scan.OrderByItemId {
+			opt.SetSort(bson.D{{"feedbackkey.itemid", 1}})
+		}
 
 		r, err := c.Find(ctx, filter, opt)
 		if err != nil {
@@ -795,4 +808,19 @@ func (db *MongoDB) DeleteUserItemFeedback(ctx context.Context, userId, itemId st
 		return 0, err
 	}
 	return int(r.DeletedCount), nil
+}
+
+func (db *MongoDB) CountUsers(ctx context.Context) (int, error) {
+	n, err := db.client.Database(db.dbName).Collection(db.UsersTable()).EstimatedDocumentCount(ctx)
+	return int(n), err
+}
+
+func (db *MongoDB) CountItems(ctx context.Context) (int, error) {
+	n, err := db.client.Database(db.dbName).Collection(db.ItemsTable()).EstimatedDocumentCount(ctx)
+	return int(n), err
+}
+
+func (db *MongoDB) CountFeedback(ctx context.Context) (int, error) {
+	n, err := db.client.Database(db.dbName).Collection(db.FeedbackTable()).EstimatedDocumentCount(ctx)
+	return int(n), err
 }

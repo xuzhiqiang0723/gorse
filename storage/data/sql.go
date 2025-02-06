@@ -371,7 +371,8 @@ func (d *SQLDatabase) BatchGetItems(ctx context.Context, itemIds []string) ([]It
 	if len(itemIds) == 0 {
 		return nil, nil
 	}
-	result, err := d.gormDB.WithContext(ctx).Table(d.ItemsTable()).
+	result, err := d.gormDB.WithContext(ctx).
+		Table(d.ItemsTable()).
 		Select("item_id, is_hidden, categories, time_stamp, labels, comment").
 		Where("item_id IN ?", itemIds).Rows()
 	if err != nil {
@@ -412,7 +413,10 @@ func (d *SQLDatabase) DeleteItem(ctx context.Context, itemId string) error {
 func (d *SQLDatabase) GetItem(ctx context.Context, itemId string) (Item, error) {
 	var result *sql.Rows
 	var err error
-	result, err = d.gormDB.WithContext(ctx).Table(d.ItemsTable()).Select("item_id, is_hidden, categories, time_stamp, labels, comment").Where("item_id = ?", itemId).Rows()
+	result, err = d.gormDB.WithContext(ctx).
+		Table(d.ItemsTable()).
+		Select("item_id, is_hidden, categories, time_stamp, labels, comment").
+		Where("item_id = ?", itemId).Rows()
 	if err != nil {
 		return Item{}, errors.Trace(err)
 	}
@@ -472,7 +476,9 @@ func (d *SQLDatabase) GetItems(ctx context.Context, cursor string, n int, timeLi
 		return "", nil, errors.Trace(err)
 	}
 	cursorItem := string(buf)
-	tx := d.gormDB.WithContext(ctx).Table(d.ItemsTable()).Select("item_id, is_hidden, categories, time_stamp, labels, comment")
+	tx := d.gormDB.WithContext(ctx).
+		Table(d.ItemsTable()).
+		Select("item_id, is_hidden, categories, time_stamp, labels, comment")
 	if cursorItem != "" {
 		tx.Where("item_id >= ?", cursorItem)
 	}
@@ -506,7 +512,9 @@ func (d *SQLDatabase) GetItemStream(ctx context.Context, batchSize int, timeLimi
 		defer close(itemChan)
 		defer close(errChan)
 		// send query
-		tx := d.gormDB.WithContext(ctx).Table(d.ItemsTable()).Select("item_id, is_hidden, categories, time_stamp, labels, comment")
+		tx := d.gormDB.WithContext(ctx).
+			Table(d.ItemsTable()).
+			Select("item_id, is_hidden, categories, time_stamp, labels, comment")
 		if timeLimit != nil {
 			tx.Where("time_stamp >= ?", *timeLimit)
 		}
@@ -546,15 +554,16 @@ func (d *SQLDatabase) GetItemFeedback(ctx context.Context, itemId string, feedba
 	} else {
 		tx = tx.Table(d.FeedbackTable())
 	}
-	tx = tx.Select("user_id, item_id, feedback_type, time_stamp")
+	tx.Select("user_id, item_id, feedback_type, time_stamp")
 	switch d.driver {
 	case SQLite:
-		tx.Where("time_stamp <= DATETIME() AND item_id = ?", itemId)
+		tx.Where("time_stamp <= DATETIME()")
 	case ClickHouse:
-		tx.Where("time_stamp <= NOW('UTC') AND item_id = ?", itemId)
+		tx.Where("time_stamp <= NOW('UTC')")
 	default:
-		tx.Where("time_stamp <= NOW() AND item_id = ?", itemId)
+		tx.Where("time_stamp <= NOW()")
 	}
+	tx.Where("item_id = ?", itemId)
 	if len(feedbackTypes) > 0 {
 		tx.Where("feedback_type IN ?", feedbackTypes)
 	}
@@ -757,7 +766,7 @@ func (d *SQLDatabase) GetUserFeedback(ctx context.Context, userId string, endTim
 	} else {
 		tx = tx.Table(d.FeedbackTable())
 	}
-	tx = tx.Select("feedback_type, user_id, item_id, time_stamp, comment").
+	tx.Select("feedback_type, user_id, item_id, time_stamp, comment").
 		Where("user_id = ?", userId)
 	if endTime != nil {
 		tx.Where("time_stamp <= ?", d.convertTimeZone(endTime))
@@ -989,9 +998,9 @@ func (d *SQLDatabase) GetFeedbackStream(ctx context.Context, batchSize int, scan
 		defer close(feedbackChan)
 		defer close(errChan)
 		// send query
-		tx := d.gormDB.WithContext(ctx).Table(d.FeedbackTable()).
-			Select("feedback_type, user_id, item_id, time_stamp, comment").
-			Order("feedback_type, user_id, item_id")
+		tx := d.gormDB.WithContext(ctx).
+			Table(d.FeedbackTable()).
+			Select("feedback_type, user_id, item_id, time_stamp, comment")
 		if len(scan.FeedbackTypes) > 0 {
 			tx.Where("feedback_type IN ?", scan.FeedbackTypes)
 		}
@@ -1006,6 +1015,17 @@ func (d *SQLDatabase) GetFeedbackStream(ctx context.Context, batchSize int, scan
 		}
 		if scan.EndUserId != nil {
 			tx.Where("user_id <= ?", scan.EndUserId)
+		}
+		if scan.BeginItemId != nil {
+			tx.Where("item_id >= ?", scan.BeginItemId)
+		}
+		if scan.EndItemId != nil {
+			tx.Where("item_id <= ?", scan.EndItemId)
+		}
+		if scan.OrderByItemId {
+			tx.Order("item_id")
+		} else {
+			tx.Order("feedback_type, user_id, item_id")
 		}
 		result, err := tx.Rows()
 		if err != nil {
@@ -1043,7 +1063,7 @@ func (d *SQLDatabase) GetUserItemFeedback(ctx context.Context, userId, itemId st
 	} else {
 		tx = tx.Table(d.FeedbackTable())
 	}
-	tx = tx.Select("feedback_type, user_id, item_id, time_stamp, comment").
+	tx.Select("feedback_type, user_id, item_id, time_stamp, comment").
 		Where("user_id = ? AND item_id = ?", userId, itemId)
 	if len(feedbackTypes) > 0 {
 		tx.Where("feedback_type IN ?", feedbackTypes)
@@ -1101,4 +1121,76 @@ func (d *SQLDatabase) convertTimeZone(timestamp *time.Time) time.Time {
 	default:
 		return *timestamp
 	}
+}
+
+func (d *SQLDatabase) CountUsers(ctx context.Context) (int, error) {
+	var (
+		count int64
+		err   error
+	)
+	switch d.driver {
+	case MySQL:
+		var tableStatus struct {
+			Rows int64
+		}
+		err = d.gormDB.WithContext(ctx).
+			Raw(fmt.Sprintf("show table status like '%s'", d.UsersTable())).
+			Scan(&tableStatus).Error
+		count = tableStatus.Rows
+	case Postgres:
+		err = d.gormDB.WithContext(ctx).
+			Raw(fmt.Sprintf("SELECT reltuples AS estimate FROM pg_class where relname = '%s'", d.UsersTable())).
+			Scan(&count).Error
+	default:
+		err = d.gormDB.WithContext(ctx).Table(d.UsersTable()).Count(&count).Error
+	}
+	return int(count), errors.Trace(err)
+}
+
+func (d *SQLDatabase) CountItems(ctx context.Context) (int, error) {
+	var (
+		count int64
+		err   error
+	)
+	switch d.driver {
+	case MySQL:
+		var tableStatus struct {
+			Rows int64
+		}
+		err = d.gormDB.WithContext(ctx).
+			Raw(fmt.Sprintf("show table status like '%s'", d.ItemsTable())).
+			Scan(&tableStatus).Error
+		count = tableStatus.Rows
+	case Postgres:
+		err = d.gormDB.WithContext(ctx).
+			Raw(fmt.Sprintf("SELECT reltuples AS estimate FROM pg_class where relname = '%s'", d.ItemsTable())).
+			Scan(&count).Error
+	default:
+		err = d.gormDB.WithContext(ctx).Table(d.ItemsTable()).Count(&count).Error
+	}
+	return int(count), errors.Trace(err)
+}
+
+func (d *SQLDatabase) CountFeedback(ctx context.Context) (int, error) {
+	var (
+		count int64
+		err   error
+	)
+	switch d.driver {
+	case MySQL:
+		var tableStatus struct {
+			Rows int64
+		}
+		err = d.gormDB.WithContext(ctx).
+			Raw(fmt.Sprintf("show table status like '%s'", d.FeedbackTable())).
+			Scan(&tableStatus).Error
+		count = tableStatus.Rows
+	case Postgres:
+		err = d.gormDB.WithContext(ctx).
+			Raw(fmt.Sprintf("SELECT reltuples AS estimate FROM pg_class where relname = '%s'", d.FeedbackTable())).
+			Scan(&count).Error
+	default:
+		err = d.gormDB.WithContext(ctx).Table(d.FeedbackTable()).Count(&count).Error
+	}
+	return int(count), errors.Trace(err)
 }

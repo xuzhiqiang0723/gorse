@@ -72,7 +72,7 @@ var oneCommand = &cobra.Command{
 			conf.Database.CacheStore = "sqlite://cache.db"
 			conf.Recommend.DataSource.PositiveFeedbackTypes = []string{"star", "like"}
 			conf.Recommend.DataSource.ReadFeedbackTypes = []string{"read"}
-			if err := conf.Validate(true); err != nil {
+			if err := conf.Validate(); err != nil {
 				log.Logger().Fatal("invalid config", zap.Error(err))
 			}
 
@@ -103,7 +103,7 @@ var oneCommand = &cobra.Command{
 		// Start worker
 		workerJobs, _ := cmd.PersistentFlags().GetInt("recommend-jobs")
 		w := worker.NewWorker(conf.Master.Host, conf.Master.Port, conf.Master.Host,
-			0, workerJobs, "", managedMode)
+			0, workerJobs, "", managedMode, nil)
 		go func() {
 			w.SetOneMode(m.Settings)
 			w.Serve()
