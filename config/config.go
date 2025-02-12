@@ -601,7 +601,7 @@ func LoadConfig(path string, oneModel bool) (*Config, error) {
 	}
 
 	// validate config file
-	if err := conf.Validate(); err != nil {
+	if err := conf.Validate(oneModel); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -615,7 +615,7 @@ func LoadConfig(path string, oneModel bool) (*Config, error) {
 	return &conf, nil
 }
 
-func (config *Config) Validate() error {
+func (config *Config) Validate(oneModel bool) error {
 	// Check non-personalized recommenders
 	nonPersonalizedNames := mapset.NewSet[string]()
 	for _, nonPersonalized := range config.Recommend.NonPersonalized {
