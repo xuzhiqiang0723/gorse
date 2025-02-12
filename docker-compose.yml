@@ -54,17 +54,6 @@ services:
   #   volumes:
   #     - clickhouse_data:/var/lib/clickhouse
 
-  # clickhouse:
-  #   image: clickhouse/clickhouse-server:22
-  #   ports:
-  #     - 8123:8123
-  #   environment:
-  #     CLICKHOUSE_DB: gorse
-  #     CLICKHOUSE_USER: gorse
-  #     CLICKHOUSE_PASSWORD: gorse_pass
-  #   volumes:
-  #     - clickhouse_data:/var/lib/clickhouse
-
   worker:
     image: zhenghaoz/gorse-worker
     restart: unless-stopped
